@@ -5,8 +5,8 @@ def visionWindowOpened(event):
 	header.getComponent("ApplyTimeRange").enabled = False
 	info.getComponent("LineRepeater").visible = False
 	info.getComponent("Loading").visible = True
-	set_initial_time_range(event)
-	btn_ApplyRange(event)
+	# set_initial_time_range(event)
+	# btn_ApplyRange(event)
 	header.getComponent("ApplyTimeRange").enabled = True
 	info.getComponent("LineRepeater").visible = True
 	info.getComponent("Loading").visible = False
@@ -110,7 +110,6 @@ def read_location():
 		"lineNumber": "[client]oee/line/lineNumber",
 		"startDate": "[client]oee/plant/startDate",
 		"endDate": "[client]oee/plant/endDate",
-		"schemaSource": "[client]oee/plant/schemaSource"
 	}
 	objs = system.tag.readBlocking( tagpaths.values() )
 	location = {}
@@ -120,16 +119,22 @@ def read_location():
 	return location
 
 
-def refresh_data(event):
+def refresh_data_OLD(event):
+	"""
+	Version 1
+	Args:
+		event:
+
+	Returns:
+
+	"""
 	loc = read_location()
 	glass_db = oee.util.get_glass_db()
 	orderStats = oee.db.getOrderStats(glass_db, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
 	erpData = oee.db.getErpData("CharterSQL_RC", loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
-	if loc["schemaSource"] == "soc":
-		downtimeEvents = oee.db.getDowntimeEvents(glass_db, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
-	else:
-		downtimeEvents = oee.db.get_gms_DowntimeEvents(glass_db, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
+	downtimeEvents = oee.db.getDowntimeEvents(glass_db, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
 	oee_plant = get_plant_oee(orderStats, erpData, downtimeEvents)
+	print 'refresh_data', loc
 	template_data = get_template_data(oee_plant, loc["sourceID"], loc["plantID"])
 	#downtime_states = get_downtime_states(downtimeEvents)
 	tagpaths = {
@@ -143,87 +148,93 @@ def refresh_data(event):
 	return
 
 
-def get_plant_oee_OLD(orderStats, erpData, downtimeEvents):
-	def create_dataset(data):
-		from com.inductiveautomation.ignition.common.util import DatasetBuilder
-		from java.lang import Integer, String, Boolean, Float
-		from java.util import Date
-		row_def = []
-		row_def.append( [ "sourceID", Integer ] )
-		row_def.append( [ "plantID", Integer ] )
-		row_def.append( [ "lineLinkID", Integer ] )
-		row_def.append( [ "lineNumber", Integer ] )
-		row_def.append( [ "orderNumber", Integer ] )
-		row_def.append( [ "orderStart", Date ] )
-		row_def.append( [ "orderEnd", Date ] )
-		row_def.append( [ "targetRate", Float ] )
-		row_def.append( [ "totalWeight", Float ] )
-		row_def.append( [ "scrapWeight", Float ] )
-		row_def.append( [ "production_time", Float ] )
-		row_def.append( [ "running_time", Float ] )
-		row_def.append( [ "generic_downtime", Float ] )
-		row_def.append( [ "planned_downtime", Float ] )
-		row_def.append( [ "unplanned_downtime", Float ] )
-		row_def.append( [ "total_downtime", Float ] )
-		row_def.append( [ "actual_runtime", Float ] )
-		row_def.append( [ "duration_hours", Float ] )
-		row_def.append( [ "availability", Float ] )
-		row_def.append( [ "performance", Float ] )
-		row_def.append( [ "quality", Float ] )
-		row_def.append( [ "oee", Float ] )
-		infoBuilder = DatasetBuilder.newBuilder()
-		infoBuilder.colNames(col[0] for col in row_def)
-		infoBuilder.colTypes(col[1] for col in row_def)
-		for row in data:
-			infoBuilder.addRow(row[col[0]] for col in row_def)
-		ds = infoBuilder.build()
-		return ds
+def refresh_data(event):
+	"""
+	Version 2
+	Args:
+		event:
 
-	def get_weights(erpData, location, order_info):
-		d = { "totalWeight": 0.1,
-			 "scrapWeight": 0.1
-				}
-		for i in range(erpData.rowCount):
-			if get_location(erpData, i) == location and erpData.getValueAt(i, "orderNumber") == order_info["orderNumber"]:
-				d["totalWeight"] = erpData.getValueAt(i, 'totalWeight')
-				d["scrapWeight"] = erpData.getValueAt(i, 'scrapWeight')
-				return d
-		return d
+	Returns:
 
-	data = []
-	for idx in range(orderStats.rowCount):
-		order_location = get_location(orderStats, idx)
-		order_info = {
-			"orderNumber": orderStats.getValueAt(idx, 'orderNumber'),
-			"orderStart": orderStats.getValueAt(idx, 'graphStart'),
-			"orderEnd": orderStats.getValueAt(idx, 'graphEnd'),
-			"targetRate": orderStats.getValueAt(idx, 'socTarget')
-		}
-		erp_dict = get_weights(erpData, order_location, order_info)
-		event_dict = getAvailability(downtimeEvents, order_location, order_info)
-		performance = ( ( (erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / event_dict["duration_hours"] )  / order_info["targetRate"] ) * 100
+	"""
 
-		if performance > 1000:
-			print 'Function: get_plant_oee '
-			print 'order_info', order_info
-			print
-			print 'erp_dict', erp_dict
-			print
-			print 'performance', performance
-			print
-			print 'event_dict', event_dict
+	def time_it(functionName, last_timestamp):
+		time_now = system.date.now()
+		intMilliseconds = system.date.millisBetween(last_timestamp,time_now)
+		print "%s: %d" % (functionName,intMilliseconds)
+		return time_now
 
-		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / (erp_dict["totalWeight"] + erp_dict["scrapWeight"])) * 100
-		oee = performance * quality * event_dict["availability"] / 10000.0
-		row_dict = merge_dicts(order_location, order_info, erp_dict, event_dict)
-		row_dict.update({
-			"performance": performance,
-			"quality": quality,
-			"oee": oee
-			})
-		data.append(row_dict)
-	oee_plant = create_dataset(data)
-	return oee_plant
+
+	loc = read_location()
+	glassDB = oee.util.get_glass_db()
+	erpDB = "CharterSQL_RC"
+
+	print("#########################################################################################")
+	print( "refresh_data: start")
+	print("#########################################################################################")
+	print("ds_orders", system.date.now())
+
+	time_diff = time_it("Start", system.date.now())
+	ds_orders = oee.roll_detail.getOrdersByDateRange(glassDB,loc["sourceID"], loc["plantID"],loc["startDate"], loc["endDate"])
+	time_diff = time_it("ds_orders", time_diff)
+	orderNumbers = tuple(filter(None,set(row[ "orderNumber" ] for row in ds_orders)))
+	time_diff = time_it("orderNumbers",time_diff)
+	orderTracking = oee.roll_detail.getOrderTracking(glassDB, loc["sourceID"], orderNumbers)
+	time_diff = time_it("orderTracking",time_diff)
+	orderStats = oee.roll_detail.getOrderStats(glassDB, loc["sourceID"], orderNumbers)
+	time_diff = time_it("orderStats",time_diff)
+	productionData = oee.roll_detail.getErpProductionData(erpDB, orderNumbers)
+	time_diff = time_it("productionData",time_diff)
+	productionItems = oee.roll_detail.getErpProductionItems(erpDB, orderNumbers)
+	time_diff = time_it("productionItems",time_diff)
+	downtimeEvents = oee.db.getDowntimeEvents(glassDB, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
+	time_diff = time_it("downtimeEvents",time_diff)
+	machine_orders = oee.roll_detail.get_machine_orders(glassDB, orderNumbers)
+	time_diff = time_it("machine_orders",time_diff)
+	machine_roll_detail = oee.roll_detail.get_machine_roll_detail(glassDB, orderNumbers)
+	time_diff = time_it("machine_roll_detail",time_diff)
+
+	print("#########################################################################################")
+	print( "refresh_data: results")
+	print("#########################################################################################")
+	print(glassDB,loc["sourceID"], loc["plantID"],loc["startDate"], loc["endDate"])
+	print("ds_orders", len(ds_orders))
+	print("orderNumbers",len(orderNumbers))
+	print("orderTracking",len(orderTracking))
+	print("orderStats",len(orderStats))
+	print("productionData",len(productionData))
+	print("productionItems",len(productionItems))
+	print("downtimeEvents",downtimeEvents)
+	print("machine_orders",len(machine_orders))
+	print("machine_roll_detail",len(machine_roll_detail))
+
+	tagpaths = {
+		"[client]oee/plant/orderStats": system.dataset.toDataSet(orderStats),
+		"[client]oee/plant/orderTracking": system.dataset.toDataSet(orderTracking),
+		"[client]oee/plant/erpData": system.dataset.toDataSet(productionData),
+		"[client]oee/plant/erpRolls": system.dataset.toDataSet(productionItems),
+		"[client]oee/plant/downtimeEvents": downtimeEvents,
+		"[client]oee/plant/machine_orders": system.dataset.toDataSet(machine_orders),
+		"[client]oee/plant/machine_roll_detail": system.dataset.toDataSet(machine_roll_detail)
+	}
+	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
+
+	print tagpaths.keys()
+	print tagpaths.values()
+
+	time_diff = time_it("save tags",time_diff)
+	oee_plant = get_plant_oee_v2(orderStats, productionItems, downtimeEvents)
+	time_diff = time_it("oee_plant",time_diff)
+	template_data = get_template_data(oee_plant, loc["sourceID"], loc["plantID"])
+	time_diff = time_it("template_data",time_diff)
+	#downtime_states = get_downtime_states(downtimeEvents)
+	tagpaths = {
+		"[client]oee/plant/oeeData": oee_plant,
+		"[client]oee/plant/template_data": template_data
+	}
+	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
+	time_diff = time_it("save tags",time_diff)
+	return
 
 
 def get_plant_oee(orderStats, erpData, downtimeEvents):
@@ -291,19 +302,29 @@ def get_plant_oee(orderStats, erpData, downtimeEvents):
 		}
 		erp_dict = get_weights(erpData, order_location, order_info)
 		event_dict = getAvailability(downtimeEvents, order_location, order_info)
-
 		sourceID = orderStats.getValueAt(idx, 'sourceID')
 		plantID = orderStats.getValueAt(idx, 'plantID')
 		lineNumber = orderStats.getValueAt(idx, 'lineNumber')
 		orderNumber = orderStats.getValueAt(idx, 'orderNumber')
-
 		pyds = system.dataset.toPyDataSet(orderStats)
-		duration_hours = sum( [ (system.date.secondsBetween(row["graphStart"], row["graphEnd"]) / 3600.0 ) for row in pyds if row["sourceID"] == sourceID and row["plantID"] == plantID and row["lineNumber"] == lineNumber and row["orderNumber"] == orderNumber] )
+		duration_hours = sum([ (system.date.secondsBetween(row[ "graphStart" ],	row[ "graphEnd" ]) / 3600.0)
+							   for row in pyds
+							   		if row[ "sourceID" ] == sourceID
+							   			and row[ "plantID" ] == plantID
+							   			and row[ "lineNumber" ] == lineNumber
+							   			and row[ "orderNumber" ] == orderNumber ])
+		# if lineNumber == 1:
+		# 	print 'duration_hours', duration_hours
 
+		duration_hours = duration_hours if duration_hours is not None else 1.0
+		duration_hours = duration_hours if duration_hours != 0 else 1.0
+		targetRate = order_info["targetRate"] if order_info["targetRate"] > 0 else 1
+		performance = ( ( (erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / duration_hours )  / targetRate ) * 100.0
 
+		# if lineNumber == 1:
+		# 	print lineNumber, orderNumber, erp_dict["totalWeight"], erp_dict["scrapWeight"], duration_hours, targetRate
 
-		performance = ( ( (erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / duration_hours )  / order_info["targetRate"] ) * 100
-		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / (erp_dict["totalWeight"] + erp_dict["scrapWeight"])) * 100
+		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / (erp_dict["totalWeight"] + erp_dict["scrapWeight"])) * 100.0
 		oee = performance * quality * event_dict["availability"] / 10000.0
 		row_dict = merge_dicts(order_location, order_info, erp_dict, event_dict)
 		row_dict.update({
@@ -312,27 +333,138 @@ def get_plant_oee(orderStats, erpData, downtimeEvents):
 			"oee": oee
 			})
 		data.append(row_dict)
-
-	# distinct_orders = list(set((row["sourceID"], row["plantID"], row["lineNumber"], row["orderNumber"] for row in system.dataset.toPyDataSet(orderStats))))
-	# distinct_data = []
-	# for sourceID, plantID, lineNumber, orderNumber in distinct_orders:
-	# 	new_row_dict = {}
-	# 	new_row_dict.clear()
-	# 	for row_dict in data:
-	# 		if row_dict["sourceID"] == sourceID and row_dict["plantID"] == plantID and row_dict["lineNumber"] == lineNumber and row_dict["orderNumber"] == orderNumber:
-	# 			if len(new_row_dict) == 0:
-	# 				new_row_dict.update(row_dict)
-	# 			else:
-	# 				new_row_dict.update(row_dict)
-	#
-	#
-	#
-	# 	pass
-
-
-
 	oee_plant = create_dataset(data)
 	return oee_plant
+
+
+def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
+	""" Process OEE numbers
+	Rules:
+		Separate row for each run segment
+	"""
+	def create_dataset(data):
+		from com.inductiveautomation.ignition.common.util import DatasetBuilder
+		from java.lang import Integer, String, Boolean, Float
+		from java.util import Date
+		row_def = []
+		row_def.append( [ "sourceID", Integer ] )
+		row_def.append( [ "plantID", Integer ] )
+		row_def.append( [ "lineLinkID", Integer ] )
+		row_def.append( [ "lineNumber", Integer ] )
+		row_def.append( [ "orderNumber", Integer ] )
+		row_def.append( [ "orderStart", Date ] )
+		row_def.append( [ "orderEnd", Date ] )
+		row_def.append( [ "targetRate", Float ] )
+		row_def.append( [ "totalWeight", Float ] )
+		row_def.append( [ "scrapWeight", Float ] )
+		row_def.append( [ "production_time", Float ] )
+		row_def.append( [ "running_time", Float ] )
+		row_def.append( [ "generic_downtime", Float ] )
+		row_def.append( [ "planned_downtime", Float ] )
+		row_def.append( [ "unplanned_downtime", Float ] )
+		row_def.append( [ "total_downtime", Float ] )
+		row_def.append( [ "actual_runtime", Float ] )
+		row_def.append( [ "duration_hours", Float ] )
+		row_def.append( [ "availability", Float ] )
+		row_def.append( [ "performance", Float ] )
+		row_def.append( [ "quality", Float ] )
+		row_def.append( [ "oee", Float ] )
+		row_def.append(["event_count", Integer])
+		row_def.append([ "rows_total", Integer ])
+		row_def.append([ "rows_assigned", Integer ])
+		infoBuilder = DatasetBuilder.newBuilder()
+		infoBuilder.colNames(col[0] for col in row_def)
+		infoBuilder.colTypes(col[1] for col in row_def)
+		for row in data:
+			infoBuilder.addRow(row[col[0]] for col in row_def)
+		ds = infoBuilder.build()
+		return ds
+
+	def get_weights(erpRolls, location, order_info):
+
+		def withinWindow(rowIndex, dateStart, dateEnd):
+			prodTime = erpRolls.getValueAt(rowIndex, "prodDateStamp")
+			pitStart = erpRolls.getValueAt(rowIndex,"pitStartTime")
+			pitEnd = erpRolls.getValueAt(rowIndex,"pitEndTime")
+
+			# print prodTime, pitStart, pitEnd, type(prodTime), type(pitStart), type(pitEnd)
+
+			if prodTime is not None:
+				if system.date.isBetween(prodTime, dateStart, dateEnd):
+					return True
+			if pitStart is not None:
+				if system.date.isBetween(pitStart, dateStart, dateEnd):
+					return True
+			if pitEnd is not None:
+				if system.date.isBetween(pitEnd, dateStart, dateEnd):
+					return True
+			return False
+
+		d = { "totalWeight": 0.1,
+			 "scrapWeight": 0.1,
+			  "rows_total": 0,
+			  "rows_assigned": 0
+			  }
+
+		startTime = system.date.addHours(order_info["orderStart"], -4)
+		endTime = system.date.addHours(order_info["orderEnd"], 4)
+		rows_total = rows_assigned = 0
+		for i in range(erpRolls.rowCount):
+			if get_location(erpRolls, i) == location and erpRolls.getValueAt(i, "orderNumber") == order_info["orderNumber"]:
+				d["rows_total"] += 1
+				if withinWindow(i, startTime, endTime):
+					d["rows_assigned"] += 1
+					weight = erpRolls.getValueAt(i, "weight") if erpRolls.getValueAt(i, "weight") is not None else 0
+					d["totalWeight"] += weight
+					if erpRolls.getValueAt(i, "itemScrapped"):
+						d["scrapWeight"] += weight
+		# print order_info["orderNumber"], rows_total, rows_assigned, d
+		return d
+
+	data = []
+	for idx in range(orderStats.rowCount):
+		# print idx, orderStats.rowCount
+		order_location = get_location(orderStats, idx)
+		order_info = {
+			"orderNumber": orderStats.getValueAt(idx, 'orderNumber'),
+			"orderStart": orderStats.getValueAt(idx, 'graphStart'),
+			"orderEnd": orderStats.getValueAt(idx, 'graphEnd'),
+			"targetRate": orderStats.getValueAt(idx, 'socTarget')
+		}
+		erp_dict = get_weights(erpRolls, order_location, order_info)
+		event_dict = getAvailability(downtimeEvents, order_location, order_info)
+		sourceID = orderStats.getValueAt(idx, 'sourceID')
+		plantID = orderStats.getValueAt(idx, 'plantID')
+		lineNumber = orderStats.getValueAt(idx, 'lineNumber')
+		orderNumber = orderStats.getValueAt(idx, 'orderNumber')
+		pyds = system.dataset.toPyDataSet(orderStats)
+		duration_hours = sum([ (system.date.secondsBetween(row[ "graphStart" ],	row[ "graphEnd" ]) / 3600.0)
+							   for row in pyds
+							   		if row[ "sourceID" ] == sourceID
+							   			and row[ "plantID" ] == plantID
+							   			and row[ "lineNumber" ] == lineNumber
+							   			and row[ "orderNumber" ] == orderNumber ])
+		duration_hours = duration_hours if duration_hours is not None else 1.0
+		duration_hours = duration_hours if duration_hours != 0 else 1.0
+		targetRate = order_info["targetRate"] if order_info["targetRate"] > 0 else 1
+		#performance = ( ( (erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / duration_hours )  / targetRate ) * 100.0
+		performance = orderStats.getValueAt(idx, 'performance')
+		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / (erp_dict["totalWeight"] + erp_dict["scrapWeight"])) * 100.0
+		try:
+			oee = performance * quality * event_dict["availability"] / 10000.0
+		except:
+			print idx, performance, quality, event_dict["availability"]
+			oee = 0.0
+		row_dict = merge_dicts(order_location, order_info, erp_dict, event_dict)
+		row_dict.update({
+			"performance": performance,
+			"quality": quality,
+			"oee": oee
+			})
+		data.append(row_dict)
+	oee_plant = create_dataset(data)
+	return oee_plant
+
 
 
 def tz_offset(t_stamp, plantID):
@@ -380,18 +512,18 @@ def getAvailability(events, location, order_info):
 
 				if system.date.isBefore(event_start, orderStart) and system.date.isBetween(event_end, orderStart, orderEnd):
 					event_duration = system.date.secondsBetween(orderStart, event_end)
-					if order_info["orderNumber"] == 459357:
-						print( event_id, event_duration, event_start, orderStart, event_end, orderEnd, "event started before order but ended during current order" )
+					# if order_info["orderNumber"] == 459357:
+					# 	print( event_id, event_duration, event_start, orderStart, event_end, orderEnd, "event started before order but ended during current order" )
 				# If event happened during current order
 				elif event_start > orderStart and event_end < orderEnd:
 					event_duration = system.date.secondsBetween(event_start, event_end)
-					if order_info["orderNumber"] == 459357:
-						print( event_id, event_duration, "event happened during current order")
+					# if order_info["orderNumber"] == 459357:
+					# 	print( event_id, event_duration, "event happened during current order")
 				# If event started before order but ended after current order
 				elif event_start < orderStart and event_end > orderEnd:
 					event_duration = system.date.secondsBetween(orderStart, orderEnd)
-					if order_info["orderNumber"] == 459357:
-						print( event_id ,event_duration, "event started before order but ended after current order")
+					# if order_info["orderNumber"] == 459357:
+					# 	print( event_id ,event_duration, "event started before order but ended after current order")
 			if event_type == 0:
 				event_dict["running_time"] += event_duration
 			elif event_type == 1:
@@ -444,6 +576,7 @@ def merge_dicts(*dict_args):
 
 
 def get_template_data(oee_plant, sourceID, plantID):
+	# print 'get_template_data'
 	headers = [
 		"sourceID",
 		"plantID",
@@ -470,6 +603,7 @@ def get_template_data(oee_plant, sourceID, plantID):
 			performance_value = 0.0
 		else:
 			performance_value = ( total_weights / duration_hrs ) / ( target_rates / total_run_count) * 100.0
+
 		if production_times == 0.0:
 			availability_value = 0.0
 		else:
@@ -480,6 +614,7 @@ def get_template_data(oee_plant, sourceID, plantID):
 			quality_value = ( ( total_weights - scrap_weights) / (total_weights + scrap_weights ) ) * 100.0
 		oee_value = performance_value * quality_value * availability_value / 10000.0
 		row_data = [ sourceID, plantID, line_number, performance_value, availability_value, quality_value, oee_value, total_run_count ]
+		# print 'get_template_data', sourceID, plantID, line_number, performance_value, availability_value, quality_value, oee_value, total_run_count
 		data.append( row_data )
 	template_data = system.dataset.toDataSet(headers, data)
 	return template_data
@@ -601,8 +736,8 @@ def get_downtime_occurrences(line_downtime):
 	durData = [ [stateName, durDict[stateName] ] for stateName in stateList]
 	sumData = [ [stateName, occDict[stateName], durDict[stateName] ] for stateName in stateList]
 
-	print(system.dataset.toDataSet(["State", "Occurrences"], occData))
-	print(durData)
+	# print(system.dataset.toDataSet(["State", "Occurrences"], occData))
+	# print(durData)
 
 	r = system.tag.writeBlocking(["[client]oee/line/dt_occurrences",
 							  "[client]oee/line/dt_duration",
@@ -630,9 +765,13 @@ def template_clicked(event):
 	dsNames = [
 		"downtimeEvents",
 		"erpData",
+		"erpRolls",
 		"oeeData",
 		"orderStats",
+		"orderTracking",
 		"template_data",
+		"machine_orders",
+		"machine_roll_detail"
 	]
 	objs = system.tag.readBlocking( [ "[client]oee/plant/{}".format(dsName) for dsName in dsNames ] )
 	ds_filtered = [ oee.util.filterDataset(obj.value, filterColumns, filterValues) for obj in objs ]

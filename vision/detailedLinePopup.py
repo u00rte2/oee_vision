@@ -243,3 +243,30 @@ def get_downtime_occurances(event):
     info.getComponent('Actual Scrap Chart').BDuration = durationData
     info.getComponent('tbl_summary').data = summaryData
     return
+
+
+def performanceTable_onDoubleClick(self, rowIndex, colIndex, colName, value, event):
+    """
+    Called when the user double-clicks on a table cell.
+
+    Arguments:
+    	self: A reference to the component that is invoking this function.
+    	rowIndex: Index of the row, starting at 0, relative to the underlying
+    	          dataset
+    	colIndex: Index of the column starting at 0, relative to the
+    	          underlying dataset
+    	colName: Name of the column in the underlying dataset
+    	value: The value at the location clicked on
+    	event: The MouseEvent object that caused this double-click event
+    """
+    params = { "sourceID": self.data.getValueAt( rowIndex, "sourceID"  ),
+               "plantID": self.data.getValueAt( rowIndex, "plantID"  ),
+               "lineLinkID": self.data.getValueAt( rowIndex, "lineLinkID"  ),
+               "lineNumber": self.data.getValueAt( rowIndex, "lineNumber"  ),
+               "orderStart": self.data.getValueAt(rowIndex,"orderStart"),
+               "orderEnd": self.data.getValueAt(rowIndex,"orderEnd"),
+               "orderNumber": self.data.getValueAt(rowIndex,"orderNumber") }
+    window = system.nav.openWindow("OEE/admin/Roll Detail", params)
+    button = window.rootContainer.getComponent("btnGetRollDetail")
+    button.doClick()
+    return

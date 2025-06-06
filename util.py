@@ -113,3 +113,18 @@ def projectUpdate(actor, resources):
 	return
 
 
+def flipDataset(ds):
+	from com.inductiveautomation.ignition.common.util import DatasetBuilder
+	from java.lang import String
+	if ds.rowCount == 0:
+		return None
+	items = system.dataset.getColumnHeaders(ds)
+	values = list(system.dataset.toPyDataSet(ds)[0])
+	# Build new dataset
+	builder = DatasetBuilder.newBuilder()
+	builder.colNames(["Item","Value"])
+	builder.colTypes([String,String])
+	for newRow in zip(items, values):
+		builder.addRow(newRow)
+	dsFlipped = builder.build()
+	return dsFlipped

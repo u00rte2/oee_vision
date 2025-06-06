@@ -154,8 +154,8 @@ def all_hosts_active(sessions):
 				return True
 		return False
 
-	ds_inactive_previous = system.tag.readBlocking(["[OEE]OT/inactiveHosts"])[0].value
-	hostConfig = system.tag.readBlocking(["[OEE]OT/hostConfig"])[0].value
+	ds_inactive_previous = system.tag.readBlocking(["[{}]OT/inactiveHosts".format(get_provider())])[0].value
+	hostConfig = system.tag.readBlocking(["[{}]OT/hostConfig".format(get_provider())])[0].value
 	inactive_rows = []
 	current_date = system.date.now()
 	notification = False
@@ -210,6 +210,21 @@ def get_running_screens(schema):
 	return
 
 
+def get_running_status(schema):
+	provider = get_provider()
+	plantName = "Superior"
+	tagpaths = []
+	lineNumbers = get_line_numbers()
+	for lineNumber in lineNumbers:
+		kwargs = {"provider": provider, "plant": plantName, "line": lineNumber, "schema": schema}
+		path = "[{provider}]{schema}/{plant}/Production/Line{line}/OEE/Availability/RealtimeStatus".format(**kwargs)
+		tagpaths.append(path)
+	objs = system.tag.readBlocking(tagpaths)
+	for lineNumber, obj in zip(lineNumbers, objs):
+		print(  "{}: {}: Line {}, RealtimeStatus: {}".format(schema, plantName, lineNumber, obj.value) )
+	return
+
+
 if __name__ == "__main__":
 	getDowntimeTriggers()
 	getDowntimeDates()
@@ -218,8 +233,9 @@ if __name__ == "__main__":
 	path = "[{provider}]OT/sessions".format(provider=get_provider())
 	sessions = system.tag.readBlocking([path])[0].value
 	all_hosts_active(sessions)
-	get_running_screens("CNG")
+	#get_running_screens("CNG")
 	get_running_screens("OT")
+	get_running_status("OT")
 
 
 
