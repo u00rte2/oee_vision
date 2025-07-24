@@ -161,19 +161,17 @@ def refresh_data(event):
 	def time_it(functionName, last_timestamp):
 		time_now = system.date.now()
 		intMilliseconds = system.date.millisBetween(last_timestamp,time_now)
-		print "%s: %d" % (functionName,intMilliseconds)
+		print "%s: %d milliseconds" % (functionName,intMilliseconds)
 		return time_now
-
 
 	loc = read_location()
 	glassDB = oee.util.get_glass_db()
 	erpDB = "CharterSQL_RC"
-
 	print("#########################################################################################")
 	print( "refresh_data: start")
 	print("#########################################################################################")
 	print("ds_orders", system.date.now())
-
+	time_begin = system.date.now()
 	time_diff = time_it("Start", system.date.now())
 	ds_orders = oee.roll_detail.getOrdersByDateRange(glassDB,loc["sourceID"], loc["plantID"],loc["startDate"], loc["endDate"])
 	time_diff = time_it("ds_orders", time_diff)
@@ -187,53 +185,52 @@ def refresh_data(event):
 	time_diff = time_it("productionData",time_diff)
 	productionItems = oee.roll_detail.getErpProductionItems(erpDB, orderNumbers)
 	time_diff = time_it("productionItems",time_diff)
-	downtimeEvents = oee.db.getDowntimeEvents(glassDB, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
+	# downtimeEvents = oee.db.getDowntimeEvents(glassDB, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
+	downtimeEvents = oee.roll_detail.getDowntimeEvents(glassDB,loc["sourceID"], orderNumbers)
 	time_diff = time_it("downtimeEvents",time_diff)
 	machine_orders = oee.roll_detail.get_machine_orders(glassDB, orderNumbers)
 	time_diff = time_it("machine_orders",time_diff)
 	machine_roll_detail = oee.roll_detail.get_machine_roll_detail(glassDB, orderNumbers)
 	time_diff = time_it("machine_roll_detail",time_diff)
-
 	print("#########################################################################################")
 	print( "refresh_data: results")
 	print("#########################################################################################")
 	print(glassDB,loc["sourceID"], loc["plantID"],loc["startDate"], loc["endDate"])
-	print("ds_orders", len(ds_orders))
-	print("orderNumbers",len(orderNumbers))
-	print("orderTracking",len(orderTracking))
-	print("orderStats",len(orderStats))
-	print("productionData",len(productionData))
-	print("productionItems",len(productionItems))
-	print("downtimeEvents",downtimeEvents)
-	print("machine_orders",len(machine_orders))
-	print("machine_roll_detail",len(machine_roll_detail))
-
+	print("ds_orders", len(ds_orders), " records")
+	print("orderNumbers",len(orderNumbers), " records")
+	print("orderTracking",len(orderTracking), " records")
+	print("orderStats",len(orderStats), " records")
+	print("productionData",len(productionData), " records")
+	print("productionItems",len(productionItems), " records")
+	print("downtimeEvents",downtimeEvents, " records")
+	print("machine_orders",len(machine_orders), " records")
+	print("machine_roll_detail",len(machine_roll_detail), " records")
 	tagpaths = {
 		"[client]oee/plant/orderStats": system.dataset.toDataSet(orderStats),
 		"[client]oee/plant/orderTracking": system.dataset.toDataSet(orderTracking),
 		"[client]oee/plant/erpData": system.dataset.toDataSet(productionData),
 		"[client]oee/plant/erpRolls": system.dataset.toDataSet(productionItems),
-		"[client]oee/plant/downtimeEvents": downtimeEvents,
+		"[client]oee/plant/downtimeEvents": system.dataset.toDataSet(downtimeEvents),
 		"[client]oee/plant/machine_orders": system.dataset.toDataSet(machine_orders),
 		"[client]oee/plant/machine_roll_detail": system.dataset.toDataSet(machine_roll_detail)
 	}
 	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
-
 	print tagpaths.keys()
 	print tagpaths.values()
-
 	time_diff = time_it("save tags",time_diff)
 	oee_plant = get_plant_oee_v2(orderStats, productionItems, downtimeEvents)
 	time_diff = time_it("oee_plant",time_diff)
-	template_data = get_template_data(oee_plant, loc["sourceID"], loc["plantID"])
+	template_data = get_template_data(oee_plant, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
 	time_diff = time_it("template_data",time_diff)
 	#downtime_states = get_downtime_states(downtimeEvents)
+	print("oee_plant",oee_plant.rowCount," records")
+	print("template_data",template_data.rowCount," records")
 	tagpaths = {
 		"[client]oee/plant/oeeData": oee_plant,
 		"[client]oee/plant/template_data": template_data
 	}
 	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
-	time_diff = time_it("save tags",time_diff)
+	time_diff = time_it("Total Milliseconds",time_begin)
 	return
 
 
@@ -256,6 +253,7 @@ def get_plant_oee(orderStats, erpData, downtimeEvents):
 		row_def.append( [ "orderNumber", Integer ] )
 		row_def.append( [ "orderStart", Date ] )
 		row_def.append( [ "orderEnd", Date ] )
+		row_def.append( [ "socID", Integer ] )
 		row_def.append( [ "targetRate", Float ] )
 		row_def.append( [ "totalWeight", Float ] )
 		row_def.append( [ "scrapWeight", Float ] )
@@ -298,7 +296,9 @@ def get_plant_oee(orderStats, erpData, downtimeEvents):
 			"orderNumber": orderStats.getValueAt(idx, 'orderNumber'),
 			"orderStart": orderStats.getValueAt(idx, 'graphStart'),
 			"orderEnd": orderStats.getValueAt(idx, 'graphEnd'),
-			"targetRate": orderStats.getValueAt(idx, 'socTarget')
+			"targetRate": orderStats.getValueAt(idx, 'socTarget'),
+			"socID": orderStats.getValueAt(idx,'socID')
+
 		}
 		erp_dict = get_weights(erpData, order_location, order_info)
 		event_dict = getAvailability(downtimeEvents, order_location, order_info)
@@ -315,16 +315,13 @@ def get_plant_oee(orderStats, erpData, downtimeEvents):
 							   			and row[ "orderNumber" ] == orderNumber ])
 		# if lineNumber == 1:
 		# 	print 'duration_hours', duration_hours
-
 		duration_hours = duration_hours if duration_hours is not None else 1.0
 		duration_hours = duration_hours if duration_hours != 0 else 1.0
 		targetRate = order_info["targetRate"] if order_info["targetRate"] > 0 else 1
 		performance = ( ( (erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / duration_hours )  / targetRate ) * 100.0
-
 		# if lineNumber == 1:
 		# 	print lineNumber, orderNumber, erp_dict["totalWeight"], erp_dict["scrapWeight"], duration_hours, targetRate
-
-		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / (erp_dict["totalWeight"] + erp_dict["scrapWeight"])) * 100.0
+		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / erp_dict["totalWeight"]) * 100.0
 		oee = performance * quality * event_dict["availability"] / 10000.0
 		row_dict = merge_dicts(order_location, order_info, erp_dict, event_dict)
 		row_dict.update({
@@ -347,6 +344,7 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 		from java.lang import Integer, String, Boolean, Float
 		from java.util import Date
 		row_def = []
+		row_def.append( [ "orderStats_ndx", Integer ] )
 		row_def.append( [ "sourceID", Integer ] )
 		row_def.append( [ "plantID", Integer ] )
 		row_def.append( [ "lineLinkID", Integer ] )
@@ -354,9 +352,11 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 		row_def.append( [ "orderNumber", Integer ] )
 		row_def.append( [ "orderStart", Date ] )
 		row_def.append( [ "orderEnd", Date ] )
+		row_def.append( [ "socID", Integer ] )
 		row_def.append( [ "targetRate", Float ] )
 		row_def.append( [ "totalWeight", Float ] )
 		row_def.append( [ "scrapWeight", Float ] )
+		row_def.append( [ "scrapPct", Float] )
 		row_def.append( [ "production_time", Float ] )
 		row_def.append( [ "running_time", Float ] )
 		row_def.append( [ "generic_downtime", Float ] )
@@ -366,10 +366,11 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 		row_def.append( [ "actual_runtime", Float ] )
 		row_def.append( [ "duration_hours", Float ] )
 		row_def.append( [ "availability", Float ] )
+		row_def.append( [ "performance_erp", Float ] )
 		row_def.append( [ "performance", Float ] )
 		row_def.append( [ "quality", Float ] )
 		row_def.append( [ "oee", Float ] )
-		row_def.append(["event_count", Integer])
+		row_def.append( [ "event_count", Integer ] )
 		row_def.append([ "rows_total", Integer ])
 		row_def.append([ "rows_assigned", Integer ])
 		infoBuilder = DatasetBuilder.newBuilder()
@@ -402,10 +403,10 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 
 		d = { "totalWeight": 0.1,
 			 "scrapWeight": 0.1,
+			  "scrapPct": 0.0,
 			  "rows_total": 0,
 			  "rows_assigned": 0
 			  }
-
 		startTime = system.date.addHours(order_info["orderStart"], -4)
 		endTime = system.date.addHours(order_info["orderEnd"], 4)
 		rows_total = rows_assigned = 0
@@ -418,18 +419,22 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 					d["totalWeight"] += weight
 					if erpRolls.getValueAt(i, "itemScrapped"):
 						d["scrapWeight"] += weight
+		d["scrapPct"] = d["scrapWeight"] / d["totalWeight"]
 		# print order_info["orderNumber"], rows_total, rows_assigned, d
 		return d
 
 	data = []
+	filteredRolls = None
 	for idx in range(orderStats.rowCount):
 		# print idx, orderStats.rowCount
 		order_location = get_location(orderStats, idx)
 		order_info = {
+			"orderStats_ndx": orderStats.getValueAt(idx, 'orderStats_ndx'),
 			"orderNumber": orderStats.getValueAt(idx, 'orderNumber'),
 			"orderStart": orderStats.getValueAt(idx, 'graphStart'),
 			"orderEnd": orderStats.getValueAt(idx, 'graphEnd'),
-			"targetRate": orderStats.getValueAt(idx, 'socTarget')
+			"targetRate": orderStats.getValueAt(idx, 'socTarget'),
+			"socID": orderStats.getValueAt(idx,'socID')
 		}
 		erp_dict = get_weights(erpRolls, order_location, order_info)
 		event_dict = getAvailability(downtimeEvents, order_location, order_info)
@@ -447,9 +452,9 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 		duration_hours = duration_hours if duration_hours is not None else 1.0
 		duration_hours = duration_hours if duration_hours != 0 else 1.0
 		targetRate = order_info["targetRate"] if order_info["targetRate"] > 0 else 1
-		#performance = ( ( (erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / duration_hours )  / targetRate ) * 100.0
-		performance = orderStats.getValueAt(idx, 'performance')
-		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / (erp_dict["totalWeight"] + erp_dict["scrapWeight"])) * 100.0
+		performance_erp = ( ( (erp_dict["totalWeight"] ) / duration_hours )  / targetRate ) * 100.0
+		performance = orderStats.getValueAt(idx, 'performance') if orderStats.getValueAt(idx, 'performance') is not None else 0.0
+		quality = ((erp_dict["totalWeight"] - erp_dict["scrapWeight"]) / erp_dict["totalWeight"]) * 100.0
 		try:
 			oee = performance * quality * event_dict["availability"] / 10000.0
 		except:
@@ -457,6 +462,7 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 			oee = 0.0
 		row_dict = merge_dicts(order_location, order_info, erp_dict, event_dict)
 		row_dict.update({
+			"performance_erp": performance_erp,
 			"performance": performance,
 			"quality": quality,
 			"oee": oee
@@ -464,7 +470,6 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 		data.append(row_dict)
 	oee_plant = create_dataset(data)
 	return oee_plant
-
 
 
 def tz_offset(t_stamp, plantID):
@@ -505,11 +510,9 @@ def getAvailability(events, location, order_info):
 			# The following events must be closed
 			if event_start is not None and event_end is not None:
 				# If event started before order but ended during current order
-
 				# system.date.isBetween(target, start, end)
 				# system.date.isAfter(date_1, date_2)
 				# system.date.isBefore(date_1, date_2)
-
 				if system.date.isBefore(event_start, orderStart) and system.date.isBetween(event_end, orderStart, orderEnd):
 					event_duration = system.date.secondsBetween(orderStart, event_end)
 					# if order_info["orderNumber"] == 459357:
@@ -575,7 +578,7 @@ def merge_dicts(*dict_args):
 	return result
 
 
-def get_template_data(oee_plant, sourceID, plantID):
+def get_template_data(oee_plant, sourceID, plantID, startDate, endDate ):
 	# print 'get_template_data'
 	headers = [
 		"sourceID",
@@ -585,10 +588,13 @@ def get_template_data(oee_plant, sourceID, plantID):
 		"availabilityOEE",
 		"qualityOEE",
 		"oee",
-		"orderCount"
+		"orderCount",
+		"startDate",
+		"endDate",
 	]
 	py_oee = system.dataset.toPyDataSet(oee_plant)
 	line_numbers = oee.util.get_line_numbers(sourceID, plantID)
+	print "get_template_data", line_numbers
 	data = []
 	for line_number in line_numbers:
 		orders_ran = [row["orderNumber"] for row in py_oee if row["lineNumber"] == line_number]
@@ -603,7 +609,8 @@ def get_template_data(oee_plant, sourceID, plantID):
 			performance_value = 0.0
 		else:
 			performance_value = ( total_weights / duration_hrs ) / ( target_rates / total_run_count) * 100.0
-
+			performance_avg = sum([row["performance"] for row in py_oee if row["lineNumber"] == line_number]) / total_run_count
+			print "get_template_data", line_number, performance_value, performance_avg
 		if production_times == 0.0:
 			availability_value = 0.0
 		else:
@@ -611,9 +618,9 @@ def get_template_data(oee_plant, sourceID, plantID):
 		if total_weights + scrap_weights == 0.0:
 			quality_value = 0.0
 		else:
-			quality_value = ( ( total_weights - scrap_weights) / (total_weights + scrap_weights ) ) * 100.0
+			quality_value = ( ( total_weights - scrap_weights) / total_weights )  * 100.0
 		oee_value = performance_value * quality_value * availability_value / 10000.0
-		row_data = [ sourceID, plantID, line_number, performance_value, availability_value, quality_value, oee_value, total_run_count ]
+		row_data = [ sourceID, plantID, line_number, performance_value, availability_value, quality_value, oee_value, total_run_count, startDate, endDate ]
 		# print 'get_template_data', sourceID, plantID, line_number, performance_value, availability_value, quality_value, oee_value, total_run_count
 		data.append( row_data )
 	template_data = system.dataset.toDataSet(headers, data)
@@ -669,21 +676,12 @@ def getChangeover(line_downtime):
 				millis = system.date.millisBetween(evt_start, end)
 				totalMillis += millis
 				hours, minutes, seconds = convert_millis(millis)
-
 				sum_millis = totalMillis
 				avg_millis = sum_millis / dataset.rowCount
-
 				totalStr = "%02d:%02d:%02d" % convert_millis(totalMillis)
 				avgStr = "%02d:%02d:%02d" % convert_millis(int(totalMillis / dataset.rowCount))
-
 				level_data[level_key].append([order_number, evt_start, evt_end, hours, minutes, bool(is_down), totalStr[:-3], avgStr[:-3] ])
-
-
-
 			tagpaths["[client]oee/line/level_{}_data".format(level)] = system.dataset.toDataSet(level_headers, level_data[level_key] )
-
-
-
 			totalStr = "%02d:%02d:%02d" % convert_millis(totalMillis)
 			avgStr = "%02d:%02d:%02d" % convert_millis(int(totalMillis / dataset.rowCount))
 			title = "Level {}".format(level)
@@ -691,7 +689,7 @@ def getChangeover(line_downtime):
 		level += 1
 	# Write level datasets
 	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
-	headers = ["Level", "Total", "Average"]
+	headers = ["Level", "Total Time", "Average Time"]
 	r = system.tag.writeBlocking(["[client]oee/line/changeover_avgs"], [system.dataset.toDataSet(headers, data)])
 	return
 
@@ -732,17 +730,17 @@ def get_downtime_occurrences(line_downtime):
 				occDict[stateName] += 1
 				durDict[stateName] += duration
 	stateList.sort()
+	occHeaders = ["State", "Occurrences"]
 	occData = [ [ stateName, occDict[stateName] ] for stateName in stateList ]
+	dt_occurrences = system.dataset.sort(system.dataset.toDataSet(occHeaders, occData), "Occurrences", 0)
 	durData = [ [stateName, durDict[stateName] ] for stateName in stateList]
 	sumData = [ [stateName, occDict[stateName], durDict[stateName] ] for stateName in stateList]
-
 	# print(system.dataset.toDataSet(["State", "Occurrences"], occData))
 	# print(durData)
-
 	r = system.tag.writeBlocking(["[client]oee/line/dt_occurrences",
 							  "[client]oee/line/dt_duration",
 							  "[client]oee/line/dt_summary"
-							  ], [system.dataset.toDataSet(["State", "Occurrences"], occData),
+							  ], [dt_occurrences,
 								  system.dataset.toDataSet(["State", "Duration"], durData),
 								  system.dataset.toDataSet(["State", "Occurrences", "Duration Minutes"], sumData)
 								  ])
@@ -777,6 +775,7 @@ def template_clicked(event):
 	ds_filtered = [ oee.util.filterDataset(obj.value, filterColumns, filterValues) for obj in objs ]
 	system.tag.writeBlocking(["[client]oee/line/{}".format(dsName) for dsName in dsNames], ds_filtered)
 	system.tag.writeBlocking(["[client]oee/line/lineNumber"], [lineNumber])
+	oee.vision.equipmentSchedule.getScheduleData()
 	# processing data for next window here because it is easier. (And I am being lazy)
 	getChangeover(ds_filtered[0])
 	get_downtime_occurrences(ds_filtered[0])
@@ -867,14 +866,10 @@ def get_average_changeover_times(event):
 		# initialize and query data for changeover data, ex: code:205 = changeover lvl 1
 		# average and total time for changeover lvl, then display it in table and labels
 		params = {'LocationName': locationName, 'EventCode': code, 'StartTime': start, 'EndTime': end}
-
-
-
 		dataset = system.db.runNamedQuery('GMS/OEE/GetEventsByLineCodeAndTimeRange', params)
 		headers = ['Order', 'Start Time', 'End Time', 'Hrs', 'Mins', 'Is Downtime']
 		tableDataset = []
 		totalMillis = 0
-
 		if dataset.rowCount > 0:
 			# iterate through each table/changeovers average, total, and workorder data
 			for row in range(dataset.rowCount):
@@ -891,18 +886,14 @@ def get_average_changeover_times(event):
 					else:
 						mins = system.date.minutesBetween(orderStart, orderEnd)
 					tableDataset.append([order, orderStart, orderEnd, hours, mins, bool(isDown)])
-
 			finalDataset = system.dataset.toDataSet(headers, tableDataset)
-
 			avgMillis = float(totalMillis) / float(dataset.rowCount)
 			avgTime = system.date.format(system.date.fromMillis(long(avgMillis)), 'mm:ss')
 			avgHrs = avgMillis / 3600000
 			avgTime = str(int(avgHrs)) + ':' + avgTime
-
 			totalTime = system.date.format(system.date.fromMillis(long(totalMillis)), 'mm:ss')
 			totalHrs = float(totalMillis) / 3600000
 			totalTime = str(int(totalHrs)) + ':' + totalTime
-
 			# set changeover level properties to calculations
 			system.gui.getParentWindow(event).getComponentForPath(
 				'Root Container.L' + str(level) + 'Avg').text = avgTime
@@ -910,7 +901,6 @@ def get_average_changeover_times(event):
 				'Root Container.L' + str(level) + 'Total').text = totalTime
 			system.gui.getParentWindow(event).getComponentForPath(
 				'Root Container.L' + str(level) + 'Table').data = finalDataset
-
 		code = code + 1
 	return
 

@@ -6,7 +6,7 @@ def visionWindowOpened(event):
 	getChartData(rc)
 	scheduledEvents = rc.getComponent("Equipment Schedule").scheduledEvents
 	first_order_number = scheduledEvents.getValueAt(0, "orderNumber")
-	filterByOrder(rc, first_order_number)
+	filterByOrder(first_order_number)
 	return
 
 
@@ -182,22 +182,57 @@ def get_dates(scheduledEvents, downtimeEvents):
 	return minDate, maxDate
 
 
-def getChartData(rc):
+def filterByOrder(orderNumber):
+	items = system.tag.readBlocking(["[client]oee/line/schedule_items"])[0].value
+	scheduledEvents = system.tag.readBlocking(["[client]oee/line/schedule_scheduledEvents"])[0].value
+	downtimeEvents = system.tag.readBlocking(["[client]oee/line/schedule_downtimeEvents"])[0].value
+	breakEvents = system.tag.readBlocking(["[client]oee/line/schedule_breakEvents"])[0].value
+
+	filtered_scheduledEvents = oee.util.filterDataset(scheduledEvents,["orderNumber"],[orderNumber])
+	filtered_downtimeEvents = oee.util.filterDataset(downtimeEvents,["orderNumber"],[str(orderNumber)])
+
+	minDate,maxDate = get_dates(filtered_scheduledEvents,filtered_downtimeEvents)
+
+	tagpaths = {
+		"[client]oee/orderNumber/schedule_items": items
+		,"[client]oee/orderNumber/schedule_scheduledEvents": filtered_scheduledEvents
+		,"[client]oee/orderNumber/schedule_downtimeEvents": filtered_downtimeEvents
+		,"[client]oee/orderNumber/schedule_breakEvents": breakEvents
+		,"[client]oee/orderNumber/schedule_start": system.date.addHours(minDate,-2)
+		,"[client]oee/orderNumber/schedule_end": system.date.addHours(maxDate,2)
+	}
+	r = system.tag.writeBlocking(tagpaths.keys(),tagpaths.values())
+	return
+
+
+def getScheduleData():
 	startDate = system.tag.readBlocking(["[client]oee/plant/startDate"])[0].value
 	endDate = system.tag.readBlocking(["[client]oee/plant/endDate"])[0].value
-	lineNumber = rc.lineNumber
-	items = create_items(lineNumber)
+	lineNumber = system.tag.readBlocking(["[client]oee/line/lineNumber"])[0].value
 	scheduledEvents = create_scheduledEvents(lineNumber)
 	downtimeEvents = create_downtimeEvents(lineNumber)
-	breakEvents = create_breakEvents(lineNumber)
-	rc.getComponent("Equipment Schedule").items = items
-	rc.getComponent("Equipment Schedule").scheduledEvents = scheduledEvents
-	rc.getComponent("Equipment Schedule").downtimeEvents = downtimeEvents
-	rc.getComponent("Equipment Schedule").breakEvents = breakEvents
 	minDate, maxDate = get_dates(scheduledEvents, downtimeEvents)
-	rc.getComponent("Equipment Schedule").startDate = system.date.addHours(minDate, -8)
-	rc.getComponent("Equipment Schedule").endDate = system.date.addHours(maxDate, 8)
-	# event.source.parent.getComponent('Equipment Schedule').breakEvents
+	tagpaths = {
+		"[client]oee/line/schedule_items": create_items(lineNumber)
+		,"[client]oee/line/schedule_scheduledEvents": scheduledEvents
+		,"[client]oee/line/schedule_downtimeEvents": downtimeEvents
+		,"[client]oee/line/schedule_breakEvents": create_breakEvents(lineNumber)
+		,"[client]oee/line/schedule_start": system.date.addHours(minDate, -8)
+		,"[client]oee/line/schedule_end": system.date.addHours(maxDate, 8)
+		}
+	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
+	print r
+	return
+
+
+def getChartData(rc):
+	getScheduleData()
+	rc.getComponent("Equipment Schedule").items = system.tag.readBlocking(["[client]oee/line/schedule_items"])[0].value
+	rc.getComponent("Equipment Schedule").scheduledEvents = system.tag.readBlocking(["[client]oee/line/schedule_scheduledEvents"])[0].value
+	rc.getComponent("Equipment Schedule").downtimeEvents = system.tag.readBlocking(["[client]oee/line/schedule_scheduledEvents"])[0].value
+	rc.getComponent("Equipment Schedule").breakEvents = system.tag.readBlocking(["[client]oee/line/schedule_breakEvents"])[0].value
+	rc.getComponent("Equipment Schedule").startDate = system.tag.readBlocking(["[client]oee/line/schedule_start"])[0].value
+	rc.getComponent("Equipment Schedule").endDate = system.tag.readBlocking(["[client]oee/line/schedule_end"])[0].value
 	return
 
 
@@ -274,46 +309,18 @@ def create_orderEvents_new(event):
 
 def schedule_onEventClicked(self, itemId, eventId, event):
 	if event.clickCount == 2:
-		scheduledEvents = self.parent.getComponent("Equipment Schedule").scheduledEvents
-		# print 'schedule_onEventClicked', scheduledEvents
-		# print 'itemId', itemId
-		# print 'eventId',eventId, type(eventId)
-		orderNumber = scheduledEvents.getValueAt(int(eventId), "orderNumber")
-		print orderNumber
-		filterByOrder(self.parent, orderNumber)
+		rc = self.parent
+		scheduledEvents = rc.getComponent("Equipment Schedule").scheduledEvents
+		downtimeEvents = rc.getComponent("Equipment Schedule").downtimeEvents
+		breakEvents = rc.getComponent("Equipment Schedule").breakEvents
+		orderNumber = scheduledEvents.getValueAt(int(eventId),"orderNumber")
+		filtered_scheduledEvents = oee.util.filterDataset(scheduledEvents, ["orderNumber"], [orderNumber])
+		filtered_downtimeEvents = oee.util.filterDataset(downtimeEvents,["orderNumber"],[str(orderNumber)])
+		rc.getComponent("Equipment Schedule 1").items = rc.getComponent("Equipment Schedule").items
+		rc.getComponent("Equipment Schedule 1").scheduledEvents = filtered_scheduledEvents
+		rc.getComponent("Equipment Schedule 1").downtimeEvents = filtered_downtimeEvents
+		rc.getComponent("Equipment Schedule 1").breakEvents = breakEvents
+		minDate, maxDate = get_dates(filtered_scheduledEvents, filtered_downtimeEvents)
+		rc.getComponent("Equipment Schedule 1").startDate = system.date.addHours(minDate, -2)
+		rc.getComponent("Equipment Schedule 1").endDate = system.date.addHours(maxDate, 2)
 	return
-
-
-def filterByOrder(rc, orderNumber):
-	scheduledEvents = rc.getComponent("Equipment Schedule").scheduledEvents
-	downtimeEvents = rc.getComponent("Equipment Schedule").downtimeEvents
-
-
-	print "filterByOrder: filtered_scheduledEvents"
-	filtered_scheduledEvents = oee.util.filterDataset(scheduledEvents, ["orderNumber"], [orderNumber])
-	print "filterByOrder: filtered_downtimeEvents"
-	filtered_downtimeEvents = oee.util.filterDataset(downtimeEvents,["orderNumber"],[orderNumber])
-	rc.getComponent("Equipment Schedule 1").items = rc.getComponent("Equipment Schedule").items
-	rc.getComponent("Equipment Schedule 1").scheduledEvents = filtered_scheduledEvents
-	rc.getComponent("Equipment Schedule 1").downtimeEvents = filtered_downtimeEvents
-	minDate, maxDate = get_dates(filtered_scheduledEvents, filtered_downtimeEvents)
-	rc.getComponent("Equipment Schedule 1").startDate = system.date.addHours(minDate, -2)
-	rc.getComponent("Equipment Schedule 1").endDate = system.date.addHours(maxDate, 2)
-
-	print minDate
-	print maxDate
-
-	return
-
-
-
-
-
-
-
-
-
-
-
-
-

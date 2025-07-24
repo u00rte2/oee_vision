@@ -4,79 +4,37 @@ def visionWindowOpened(event):
     rc = window.getRootContainer()
     header = rc.getComponent("Header")
     info = rc.getComponent("Info")
-
-    print("rc ", type(rc), rc)
-    print("header ", type(header), header)
-    print("info ", type(info), info)
-
-    log = system.util.getLogger('OEE EVENT')
-    log.info('START')
-
-    rc.getComponent("Loading").visible = True
     info.visible = False
-    header.getComponent("OEE").visible = False
-
     StartTime = rc.startTime
     EndTime = rc.endTime
     startTimeRange = system.date.addWeeks(StartTime, -4)
     endTimeRange = system.date.addWeeks(EndTime, 1)
-
-
-    rc.mode = 'historic'
     header.getComponent("Date Range").outerRangeStartDate = startTimeRange
     header.getComponent("Date Range").outerRangeEndDate = endTimeRange
     header.getComponent("Date Range").startDate = StartTime
     header.getComponent("Date Range").endDate = EndTime
-
     LocationName = rc.plantName + '/Line' + str(rc.lineNumber)
-
-
     changeoverData = GMS.OEE.getChangeover(StartTime, EndTime, LocationName)
-
     downData = info.getComponent("Template Repeater").templateParams
-
-
     updates = {"EndDate": EndTime, "FQPath": LocationName, "StartDate": StartTime, "refresh": True}
     newDownDS = system.dataset.updateRow(downData, 0, updates)
-
     avail = GMS.OEE.getAvailability(StartTime, EndTime, LocationName)
     perf = GMS.OEE.getPerformance(StartTime, EndTime, LocationName)
     qual = GMS.OEE.getQuality(StartTime, EndTime, LocationName)
-
     header.getComponent("OEE").availabilityOEE = avail
     header.getComponent("OEE").performanceOEE = perf
     header.getComponent("OEE").qualityOEE = qual
-
     info.getComponent("Template Repeater").templateParams = newDownDS
     info.getComponent("AverageChangeoverTable").data = changeoverData
-
-
     liveData = GMS.OEE.getRateTime(StartTime, EndTime, rc.plantName, rc.lineNumber)
-
-
-
     chart = info.getComponent("RateChart")
-    print("chart ", type(chart), chart)
-
     ds = info.getComponent("RateChart").getPropertyValue("Data")
-    print('ds ', ds)
-
     info.getComponent("RateChart").setPropertyValue( "Data", liveData )
-
-
-
-
-
-
     livePerformance = GMS.OEE.getLivePerformance(StartTime, EndTime, liveData, LocationName)
     header.getComponent("OEE").liveOEE = livePerformance['performance']
-
-
-
     # Calculate Performance Data
     params = {'StartTime': StartTime, 'EndTime': EndTime, 'LocationName': LocationName}
     rawPerformanceData = system.db.runNamedQuery('GMS/OEE/GetHistoricPerformance', params)
-
     aggregatePerformanceHeaders = ["WorkOrderUUID", "LocationName", "ActualStartTime", "ActualEndTime", "OutfeedCount",
                                    "RejectCount", "StandardRate", "Timestamp", "Performance"]
     aggregatePerformanceData = []
@@ -89,18 +47,15 @@ def visionWindowOpened(event):
     rowStandardRate = 0
     rowTimeStamp = None
     for row in rawPerformanceData:
-
         if (row['WorkOrderUUID'] != lastWorkOrder and lastWorkOrder != None) or (
                 row['LocationName'] != lastLocationName and lastLocationName != None):
             # Calcualte Aggregate Performance
             Performance = ((float(rowOutfeed - rowReject) / (
                         float(system.date.secondsBetween(rowStartTime, rowEndTime)) / 3600)) / rowStandardRate) * 100.0
-
             # Create Row for Table
             aggregateRow = [lastWorkOrder, lastLocationName, rowStartTime, rowEndTime, rowOutfeed, rowReject,
                             rowStandardRate, rowTimeStamp, Performance]
             aggregatePerformanceData.append(aggregateRow)
-
             # Reset Values
             rowStartTime = None
             rowEndTime = None
@@ -108,51 +63,36 @@ def visionWindowOpened(event):
             rowReject = 0
             rowStandardRate = 0
             rowTimeStamp = None
-
         # Keep track of last Work Order and Location Name
         lastWorkOrder = row['WorkOrderUUID']
         lastLocationName = row['LocationName']
-
         # Get the earliest Start Time
         if rowStartTime == None or row['ActualStartTime'] < rowStartTime:
             rowStartTime = row['ActualStartTime']
-
         # Get the latest End Time
         if rowEndTime == None or row['ActualEndTime'] > rowEndTime:
             rowEndTime = row['ActualEndTime']
-
         # Get sum of Outfeed Count and Reject Count
         rowOutfeed += row['OutfeedCount']
         rowReject += row['RejectCount']
-
         # Get the latest Standard Rate and timestamp
         rowStandardRate = row['StandardRate']
         rowTimeStamp = row['Timestamp']
-
     # Calcualte Last Row Aggregate Performance
     Performance = ((float(rowOutfeed - rowReject) / (
                 float(system.date.secondsBetween(rowStartTime, rowEndTime)) / 3600)) / rowStandardRate) * 100.0
-
     # Create Last Row for Table
     row = [lastWorkOrder, lastLocationName, rowStartTime, rowEndTime, rowOutfeed, rowReject, rowStandardRate,
            rowTimeStamp, Performance]
     aggregatePerformanceData.append(row)
-
     # Create performanceData
     performanceData = system.dataset.toDataSet(aggregatePerformanceHeaders, aggregatePerformanceData[1:])
     info.getComponent("PerformanceTable").data = performanceData
-
     qualityData = system.db.runNamedQuery('GMS/OEE/GetHistoricQuality', params)
     info.getComponent("RejectTable").data = qualityData
-
     rc.getComponent("Loading").visible = False
     info.visible = True
     header.getComponent("OEE").visible = True
-
-
-
-    log.info('END')
-
     return
 
 
@@ -172,7 +112,6 @@ def getChangeover():
     level = 1
     now = system.date.now()
     loc = oee.vision.main.read_location()
-    print(loc)
     line_downtime = system.tag.readBlocking( ["[client]oee/line/downtimeEvents"] )[0].value
     # Iterate through each event code for changeover levels 1 - 6
     for eventCode in range(205, 211):
@@ -245,6 +184,44 @@ def get_downtime_occurances(event):
     return
 
 
+def openRollDetail(params):
+    window = system.nav.openWindow("OEE/admin/Roll Detail", params)
+    button = window.rootContainer.getComponent("btnGetRollDetail")
+    button.doClick()
+    return
+
+def getTargetHistory():
+    glassDB = oee.util.get_glass_db()
+    oeeData = system.tag.readBlocking(["[client]oee/orderNumber/oeeData"])[0].value
+    socIDs = list(filter(None, set(( row["socID"] for row in system.dataset.toPyDataSet(oeeData) ))))
+    socID = socIDs[0] if len(socIDs) > 0 else 0
+    targetHistory = oee.db.getTargetHistory(glassDB,socID)
+    return targetHistory
+
+def openOrderDetail(params):
+    orderNumber = params["orderNumber"]
+    dsMap = {
+        "downtimeEvents": {"filterColumn": "WorkOrderUUID","filterValue": str(orderNumber)},
+        "erpData": {"filterColumn": "orderNumber","filterValue": orderNumber},
+        "erpRolls": {"filterColumn": "orderNumber","filterValue": orderNumber},
+        "oeeData": {"filterColumn": "orderNumber","filterValue": orderNumber},
+        "orderStats": {"filterColumn": "orderNumber","filterValue": orderNumber},
+        "orderTracking": {"filterColumn": "orderNumber","filterValue": orderNumber},
+        "machine_orders": {"filterColumn": "orderNumber","filterValue": orderNumber},
+        "machine_roll_detail": {"filterColumn": "orderNumber","filterValue": orderNumber}
+    }
+    dsNames = dsMap.keys()
+    objs = system.tag.readBlocking(["[client]oee/plant/{}".format(dsName) for dsName in dsNames])
+    ds_filtered = [oee.util.filterDataset(obj.value,[dsMap[dsName]["filterColumn"]],[dsMap[dsName]["filterValue"]]) for obj, dsName in zip(objs, dsNames)]
+    system.tag.writeBlocking(["[client]oee/orderNumber/{}".format(dsName) for dsName in dsNames], ds_filtered)
+    system.tag.writeBlocking(["[client]oee/orderNumber/orderNumber"], [orderNumber])
+    system.tag.writeBlocking(["[client]oee/orderNumber/targetHistory"],[getTargetHistory()])
+    window = system.nav.openWindow("OEE/admin/Order Detail")
+    # button = window.rootContainer.getComponent("btnGetRollDetail")
+    # button.doClick()
+    return
+
+
 def performanceTable_onDoubleClick(self, rowIndex, colIndex, colName, value, event):
     """
     Called when the user double-clicks on a table cell.
@@ -266,7 +243,7 @@ def performanceTable_onDoubleClick(self, rowIndex, colIndex, colName, value, eve
                "orderStart": self.data.getValueAt(rowIndex,"orderStart"),
                "orderEnd": self.data.getValueAt(rowIndex,"orderEnd"),
                "orderNumber": self.data.getValueAt(rowIndex,"orderNumber") }
-    window = system.nav.openWindow("OEE/admin/Roll Detail", params)
-    button = window.rootContainer.getComponent("btnGetRollDetail")
-    button.doClick()
+    # openRollDetail(params)
+    oee.vision.equipmentSchedule.filterByOrder(self.data.getValueAt(rowIndex,"orderNumber"))
+    openOrderDetail(params)
     return

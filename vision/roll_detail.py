@@ -28,20 +28,53 @@ def getOrdersByDateRange(database, sourceID, plantID, startDate, endDate):
 
 def getOrderTracking(database, sourceID, orderNumbers):
 	qry = """
-	SELECT TOP(10000) * 
+	SELECT TOP(10000) *
+			,CAST(DATEDIFF(second, [orderStart], [orderEnd]) / 3600.0 AS DECIMAL(8,3)) AS duration_hours
 	FROM soc.orderTracking
 	WHERE sourceID = {sourceID} AND orderNumber IN {orderNumbers}
-	ORDER BY 1
+	ORDER BY sourceID, plantID, lineNumber, orderNumber
 	""".format(sourceID=sourceID, orderNumbers=orderNumbers)
+	return system.db.runQuery(qry, database)
+
+
+def getDowntimeEvents(database, sourceID, orderNumbers):
+	orderStrings = tuple(str(orderNumber) for orderNumber in orderNumbers)
+	qry = """
+	SELECT TOP(10000)
+		a.*,
+		b.ParentEventCode,
+		b.[Name], 
+		b.[Description], 
+		b.IsDowntime, 
+		b.IsPlanned,
+		DATEDIFF(hour, a.StartTime, a.EndTime) AS 'Hours', 
+		DATEDIFF(minute, a.StartTime, a.EndTime) % 60 AS 'Minutes',
+		CONVERT(VARCHAR(5), DATEADD(SECOND,DATEDIFF(SECOND, a.StartTime, a.EndTime), 0), 108) AS 'hh:mm',
+		CASE
+			WHEN b.ParentEventCode = 0 THEN 'Running'
+			WHEN b.ParentEventCode = 2 THEN 'Planned Downtime'
+			WHEN b.ParentEventCode = 3 THEN 'Unplanned Downtime'
+			ELSE 'Error in parent code'
+		END AS [State]		
+	FROM soc.DowntimeEvents a
+	JOIN soc.DowntimeCodes b
+		ON a.EventCode = b.EventCode
+	WHERE sourceID = {sourceID}
+		AND WorkOrderUUID IN {orderNumbers}
+	ORDER BY StartTime ASC
+	""".format(sourceID=sourceID, orderNumbers=orderStrings)
 	return system.db.runQuery(qry, database)
 
 
 def getOrderStats(database, sourceID, orderNumbers):
 	qry = """
-	SELECT TOP(10000) * 
-	FROM soc.orderStats
-	WHERE sourceID = {sourceID} AND orderNumber IN {orderNumbers}
-	ORDER BY 1
+	SELECT TOP(10000) o.* 
+		,CAST(DATEDIFF(second, o.[graphStart], o.[graphEnd]) / 3600.0 AS DECIMAL(8,3)) AS duration_hours
+		,p.plantName
+	FROM soc.orderStats o
+	LEFT JOIN soc.plantDef p WITH (NOLOCK) ON o.sourceID = p.sourceID AND o.plantID = p.plantID AND o.lineNumber = p.lineNumber
+	WHERE o.sourceID = {sourceID} AND o.orderNumber IN {orderNumbers}
+	ORDER BY o.sourceID, o.plantID, o.lineNumber, o.orderNumber
 	""".format(sourceID=sourceID, orderNumbers=orderNumbers)
 	return system.db.runQuery(qry, database)
 
@@ -77,6 +110,7 @@ def getErpProductionData(database, orderNumbers):
 			,ProductionData.prodStartQty
 			,ProductionData.prodTotalQty
 			,ProductionData.FeetPerPound
+			,CAST(DATEDIFF(second, ProductionData.prodStartDate, ProductionData.prodCompleteDate) / 3600.0 AS DECIMAL(8,3)) AS duration_hours
 	FROM [CNFSQLProd01].[CharterSQL_RC].[dbo].[salesorders] WITH (NOLOCK)
 			JOIN [CNFSQLProd01].[CharterSQL_RC].[dbo].[ItemMaster] WITH (NOLOCK) ON SalesOrders.itemMasterID = ItemMaster.itemMasterID
 			LEFT JOIN [CNFSQLProd01].[CharterSQL_RC].[dbo].productiondata WITH (NOLOCK) ON SalesOrders.ordernumber = productiondata.ordernumber 
@@ -85,7 +119,7 @@ def getErpProductionData(database, orderNumbers):
 			LEFT JOIN [CNFSQLProd01].[CharterSQL_RC].[dbo].schedulemaster WITH (NOLOCK) ON schedulemaster.orderNumber = SalesOrders.orderNumber
 			LEFT JOIN [CNFSQLProd01].[CharterSQL_RC].[dbo].ProductionLineInfo SchLine WITH (NOLOCK) ON schedulemaster.lineNumber = SchLine.lineInfoID
 	WHERE ProductionData.orderNumber IN {orderNumbers}
-	ORDER BY ProductionData.prodStartDate
+	ORDER BY SalesOrders.plantRoutingID, COALESCE(ProductionLineInfo.linenumber, schline.linenumber), ProductionData.orderNumber
 	""".format(orderNumbers=orderNumbers)
 	return system.db.runQuery(qry, database)
 
@@ -97,6 +131,7 @@ def getErpProductionItems(database, orderNumbers):
 				,SalesOrders.plantRoutingID AS plantID
 				,ProductionLineInfo.lineInfoID AS lineLinkID
 				,ProductionLineInfo.lineNumber
+				,CAST(DATEDIFF(second, productionItems.pitStartTime, productionItems.pitEndTime) / 3600.0 AS DECIMAL(6,2)) AS duration_hours
 				,productionItems.* 
 	FROM dbo.productionItems
 	JOIN dbo.SalesOrders WITH (NOLOCK)
@@ -104,14 +139,15 @@ def getErpProductionItems(database, orderNumbers):
 	LEFT JOIN dbo.ProductionLineInfo WITH (NOLOCK) 
 		ON ProductionLineInfo.lineInfoID = productionItems.prodLineID
 	WHERE productionItems.orderNumber IN {orderNumbers}
-	ORDER BY productionItems.prodDateStamp
+	ORDER BY SalesOrders.plantRoutingID, ProductionLineInfo.lineNumber, productionItems.orderNumber
 	""".format(orderNumbers=orderNumbers)
 	return system.db.runQuery(qry, database)
 
 
 def getIndexesByID(database, idNumbers):
 	qry = """
-	SELECT TOP(10000) * 
+	SELECT TOP(50000) * 
+		,CAST(DATEDIFF(second, startTime, endTime) / 3600.0 AS DECIMAL(6,2)) AS duration_hours
 	FROM dbo.indexTimes
 	WHERE indextimes_ndx IN {idNumbers}
 	ORDER BY 1
@@ -121,7 +157,8 @@ def getIndexesByID(database, idNumbers):
 
 def getIndexesByOrderNumber(database, orderNumber):
 	qry = """
-	SELECT TOP(10000) * 
+	SELECT TOP(50000) * 
+		,CAST(DATEDIFF(second, startTime, endTime) / 3600.0 AS DECIMAL(6,2)) AS duration_hours
 	FROM dbo.indexTimes
 	WHERE Order_Number LIKE '%{orderNumber}%'
 	ORDER BY 1
@@ -131,7 +168,8 @@ def getIndexesByOrderNumber(database, orderNumber):
 
 def get_machine_roll_detail(database, orderNumbers):
 	qry = """
-	SELECT TOP(10000) * 
+	SELECT TOP(50000) * 
+		,CAST(DATEDIFF(second, [rollStart], [rollEnd]) / 3600.0 AS DECIMAL(8,3)) AS duration_hours
 	FROM soc.rollDetail
 	WHERE orderNumber IN {orderNumbers}
 	ORDER BY rollStart
@@ -141,10 +179,14 @@ def get_machine_roll_detail(database, orderNumbers):
 
 def get_machine_orders(database, orderNumbers):
 	qry = """
-	SELECT TOP(10000) * 
-	FROM soc.Orders
-	WHERE sourceID = 1
-		AND orderNumber IN {orderNumbers}
+	SELECT TOP(50000) o.* 
+		,CAST(DATEDIFF(second, [orderStart], [orderEnd]) / 3600.0 AS DECIMAL(8,3)) AS duration_hours
+		,p.lineLinkID
+		,p.plantName
+	FROM soc.Orders o
+	LEFT JOIN soc.plantDef p WITH (NOLOCK) ON o.sourceID = p.sourceID AND o.plantID = p.plantID AND o.lineNumber = p.lineNumber
+	WHERE o.sourceID = 1
+		AND o.orderNumber IN {orderNumbers}
 	ORDER BY 1
 	""".format(orderNumbers=orderNumbers)
 	return system.db.runQuery(qry, database)
@@ -163,6 +205,7 @@ def getIndexesByWindow(database, windowTimes):
 	qry = """
 	SELECT
 	TOP(100) * 
+		,CAST(DATEDIFF(second, startTime, endTime) / 3600.0 AS DECIMAL(8,3)) AS duration_hours
 	FROM dbo.IndexTimes
 	{whereClause}
 	ORDER BY 1
