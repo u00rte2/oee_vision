@@ -19,14 +19,17 @@ def get_dsMap():
 		,"erpRolls": {"dsName": "erpRolls", "id": "ID","startDate": "pitStartTime","endDate": "pitEndTime","label": "itemNumber", "orderNumber": "orderNumber"}
 		,"machine_orders": {"dsName": "machine_orders","id": "Orders_idx","startDate": "orderStart","endDate": "orderEnd","label": "rawOrder","orderNumber": "orderNumber"}
 		,"machine_roll_detail": {"dsName": "machine_roll_detail","id": "rollDetail_idx","startDate": "rollStart","endDate": "rollEnd","label": "rawOrder","orderNumber": "orderNumber"}
+		,"downtimeEvents": {"dsName": "downtimeEvents","id": "ID","startDate": "StartTime","endDate": "EndTime","label": "Name",
+								 "orderNumber": "WorkOrderUUID"}
 	}
 	return dsMap
 
 
-def create_items(lineNumber):
+def create_items(lineNumber, folder):
 	"""
 	Args:
 		lineNumber:
+		folder:
 
 	Returns:
 		items dataset with entry for each source
@@ -36,14 +39,14 @@ def create_items(lineNumber):
 	erpData: prodStartDate, prodCompleteDate
 	erpRolls: pitStartTime, pitEndTime
 	"""
-	ds = system.tag.readBlocking(["[client]oee/plant/template_data"])[0].value
+	ds = system.tag.readBlocking(["[client]oee/{}/template_data".format(folder)])[0].value
 	imagePath = "Builtin/icons/24/media_play.png"
 	foreground = system.gui.color(0,0,0,255)
 	background = system.gui.color(192,192,192,255)
 	colNames = ["ID","Label","StatusImagePath","Foreground","Background","dsName"]
 	rows = []
 	#for dsName in ["orderTracking","orderTracking_index","orderStats","erpData","erpRolls"]:
-	for dsName in ["erpData","erpRolls","orderTracking","orderStats","machine_orders","machine_roll_detail_A","machine_roll_detail_B"]:
+	for dsName in ["downtimeEvents","erpData","erpRolls","orderTracking","orderStats","machine_orders","machine_roll_detail_A","machine_roll_detail_B"]:
 		row=[
 			"L{}-{}".format(lineNumber, dsName)
 			,"L{}-{}".format(lineNumber, dsName)
@@ -57,10 +60,10 @@ def create_items(lineNumber):
 	return items
 
 
-def get_datasets():
+def get_datasets(folder):
 	dsMap = get_dsMap()
 	dsNames = [ dsMap[key]["dsName"] for key in dsMap.keys() ]
-	paths = [ "[client]oee/line/{}".format( dsMap[key]["dsName"]) for key in dsMap.keys()]
+	paths = [ "[client]oee/{}/{}".format( folder, dsMap[key]["dsName"]) for key in dsMap.keys()]
 	objs = system.tag.readBlocking(paths)
 	print paths
 	datasets = { dsName: obj.value for dsName, obj in zip(dsNames, objs) }
@@ -73,7 +76,7 @@ def get_datasets():
 	return datasets
 
 
-def create_scheduledEvents(lineNumber):
+def create_scheduledEvents(lineNumber, folder):
 	dsMap = get_dsMap()
 	roll_detail_config = dsMap["machine_roll_detail"]
 	dsMap.pop("machine_roll_detail")
@@ -81,7 +84,7 @@ def create_scheduledEvents(lineNumber):
 	dsMap["machine_roll_detail_A"]["dsName"] = "machine_roll_detail_A"
 	dsMap["machine_roll_detail_B"] = roll_detail_config
 	dsMap["machine_roll_detail_B"]["dsName"] = "machine_roll_detail_B"
-	datasets = get_datasets()
+	datasets = get_datasets(folder)
 	print datasets
 	foreground = system.gui.color(0,0,0,255)
 	leadTime = 0
@@ -107,7 +110,9 @@ def create_scheduledEvents(lineNumber):
 					startDate = ds.getValueAt(idx, "prodDateStamp")
 					endDate = system.date.addHours(startDate, 1)
 					background = system.gui.color("blue")
-			if any( dsName == itemName for dsName in ["machine_roll_detail_A", "machine_roll_detail_B"] ):
+			elif itemName == "downtimeEvents":
+				background = system.gui.color(ds.getValueAt(idx, "Color"))
+			elif any( dsName == itemName for dsName in ["machine_roll_detail_A", "machine_roll_detail_B"] ):
 				if any(ds.getValueAt(idx,colName) == True for colName in ("milChanged","widthChanged","conversionError")):
 					background = system.gui.color("red")
 			row=[
@@ -121,7 +126,7 @@ def create_scheduledEvents(lineNumber):
 				,leadTime
 				,leadcolor
 				,100.0
-				,ds.getValueAt(idx,contents["orderNumber"])
+				,str(ds.getValueAt(idx,contents["orderNumber"]))
 				,idx if contents["id"] == "idx" else ds.getValueAt(idx, contents["id"])
 			]
 			rows.append(row)
@@ -130,9 +135,9 @@ def create_scheduledEvents(lineNumber):
 	return scheduledEvents
 
 
-def create_downtimeEvents(lineNumber):
+def create_downtimeEvents(lineNumber, folder):
 	dsMap = get_dsMap()
-	ds = system.tag.readBlocking(["[client]oee/line/downtimeEvents"])[0].value
+	ds = system.tag.readBlocking(["[client]oee/{}/downtimeEvents".format(folder)])[0].value
 	foreground = system.gui.color(0,0,0,255)
 	downtimeColor = system.gui.color(255,0,0,50)
 	colNames = ["ItemID","StartDate","EndDate","Color","Layer", "orderNumber"]
@@ -152,8 +157,8 @@ def create_downtimeEvents(lineNumber):
 	return downtimeEvents
 
 
-def create_breakEvents(lineNumber):
-	ds = system.tag.readBlocking(["[client]oee/line/downtimeEvents"])[0].value
+def create_breakEvents(lineNumber,folder):
+	ds = system.tag.readBlocking(["[client]oee/{}/downtimeEvents".format(folder)])[0].value
 	breakColor = system.gui.color(255,0,0)
 	colNames = ["StartDate","EndDate","Color"]
 	rows = []
@@ -205,20 +210,17 @@ def filterByOrder(orderNumber):
 	return
 
 
-def getScheduleData():
-	startDate = system.tag.readBlocking(["[client]oee/plant/startDate"])[0].value
-	endDate = system.tag.readBlocking(["[client]oee/plant/endDate"])[0].value
-	lineNumber = system.tag.readBlocking(["[client]oee/line/lineNumber"])[0].value
-	scheduledEvents = create_scheduledEvents(lineNumber)
-	downtimeEvents = create_downtimeEvents(lineNumber)
+def getScheduleData(lineNumber, folder):
+	scheduledEvents = create_scheduledEvents(lineNumber,folder)
+	downtimeEvents = create_downtimeEvents(lineNumber,folder)
 	minDate, maxDate = get_dates(scheduledEvents, downtimeEvents)
 	tagpaths = {
-		"[client]oee/line/schedule_items": create_items(lineNumber)
-		,"[client]oee/line/schedule_scheduledEvents": scheduledEvents
-		,"[client]oee/line/schedule_downtimeEvents": downtimeEvents
-		,"[client]oee/line/schedule_breakEvents": create_breakEvents(lineNumber)
-		,"[client]oee/line/schedule_start": system.date.addHours(minDate, -8)
-		,"[client]oee/line/schedule_end": system.date.addHours(maxDate, 8)
+		"[client]oee/{}/schedule_items".format(folder): create_items(lineNumber,folder)
+		,"[client]oee/{}/schedule_scheduledEvents".format(folder): scheduledEvents
+		,"[client]oee/{}/schedule_downtimeEvents".format(folder): downtimeEvents
+		,"[client]oee/{}/schedule_breakEvents".format(folder): create_breakEvents(lineNumber,folder)
+		,"[client]oee/{}/schedule_start".format(folder): system.date.addHours(minDate, -8)
+		,"[client]oee/{}/schedule_end".format(folder): system.date.addHours(maxDate, 8)
 		}
 	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
 	print r
@@ -226,7 +228,8 @@ def getScheduleData():
 
 
 def getChartData(rc):
-	getScheduleData()
+	folder = "line"
+	getScheduleData(rc.lineNumber, folder)
 	rc.getComponent("Equipment Schedule").items = system.tag.readBlocking(["[client]oee/line/schedule_items"])[0].value
 	rc.getComponent("Equipment Schedule").scheduledEvents = system.tag.readBlocking(["[client]oee/line/schedule_scheduledEvents"])[0].value
 	rc.getComponent("Equipment Schedule").downtimeEvents = system.tag.readBlocking(["[client]oee/line/schedule_scheduledEvents"])[0].value

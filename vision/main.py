@@ -775,7 +775,7 @@ def template_clicked(event):
 	ds_filtered = [ oee.util.filterDataset(obj.value, filterColumns, filterValues) for obj in objs ]
 	system.tag.writeBlocking(["[client]oee/line/{}".format(dsName) for dsName in dsNames], ds_filtered)
 	system.tag.writeBlocking(["[client]oee/line/lineNumber"], [lineNumber])
-	oee.vision.equipmentSchedule.getScheduleData()
+	oee.vision.equipmentSchedule.getScheduleData(lineNumber, "line")
 	# processing data for next window here because it is easier. (And I am being lazy)
 	getChangeover(ds_filtered[0])
 	get_downtime_occurrences(ds_filtered[0])

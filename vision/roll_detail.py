@@ -55,7 +55,8 @@ def getDowntimeEvents(database, sourceID, orderNumbers):
 			WHEN b.ParentEventCode = 2 THEN 'Planned Downtime'
 			WHEN b.ParentEventCode = 3 THEN 'Unplanned Downtime'
 			ELSE 'Error in parent code'
-		END AS [State]		
+		END AS [State],
+		b.[color] AS [Color]	
 	FROM soc.DowntimeEvents a
 	JOIN soc.DowntimeCodes b
 		ON a.EventCode = b.EventCode

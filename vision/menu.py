@@ -1,5 +1,5 @@
 def validate_user():
-	valid_users = [ "TEnglund", "TGeissler", "ZMerrilees"]
+	valid_users = [ "TEnglund", "TGeissler", "Zach.Merrilees"]
 	username = system.tag.readBlocking(["[System]Client/User/Username"])[0].value
 	if username in valid_users:
 		return True
