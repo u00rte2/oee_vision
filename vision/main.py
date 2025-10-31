@@ -5,8 +5,9 @@ def visionWindowOpened(event):
 	header.getComponent("ApplyTimeRange").enabled = False
 	info.getComponent("LineRepeater").visible = False
 	info.getComponent("Loading").visible = True
-	# set_initial_time_range(event)
-	# btn_ApplyRange(event)
+	set_plants(rc)
+	set_initial_time_range(event)
+	btn_ApplyRange(event)
 	header.getComponent("ApplyTimeRange").enabled = True
 	info.getComponent("LineRepeater").visible = True
 	info.getComponent("Loading").visible = False
@@ -21,7 +22,8 @@ def btn_ApplyRange(event):
 		"[client]oee/plant/endDate": header.getComponent("Date Range").endDate
 	}
 	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
-	refresh_data(event)
+	# refresh_data(event)
+	refresh_data_no_timing(event)
 	return
 
 
@@ -30,7 +32,7 @@ def set_initial_time_range(event):
 	rc = system.gui.getParentWindow(event).getRootContainer()
 	header = rc.getComponent("Header")
 	now = system.date.now()
-	startDate = system.date.addWeeks(now, -2)
+	startDate = system.date.addWeeks(now, -1)
 	endDate = now
 	# Write to window
 	header.getComponent("Date Range").outerRangeStartDate = system.date.addMonths(now, -1)
@@ -40,48 +42,34 @@ def set_initial_time_range(event):
 	return
 
 
-
-def getPlantDropDown(event):
-	""" This is not used at this time.
-
-		Returns:
-			ddPlants: dataset of unique plants
-	"""
-	dsPlantConfig = system.tag.readBlocking(["[default]OT/SOC/config/plantConfiguration"])[0].value
-	uniquePlants = list(set([ (row['sourceID'], row['plantID'] ) for row in system.dataset.toPyDataSet(dsPlantConfig) if row['lineLinkID'] != 0 ]))
-	headers = [
-				'plantName',
-				'sourceID',
-				'plantID',
-				'erp',
-				'providerLocal',
-				'plantCode2',
-				'plantCode3',
-				'providerRemote',
-				'gateway',
-				'socDB',
-				'defaultHistorian',
-				'databaseProvider',
-				'gatewayHostname'
-				]
-	rows = []
-	for sourceID, plantID in uniquePlants:
-		for row in system.dataset.toPyDataSet(dsPlantConfig):
-			rowData = []
-			if row['sourceID'] == sourceID and row['plantID'] == plantID:
-				for col in headers:
-					rowData.append(row[str(col)])
-				if rowData not in rows:
-					rows.append(rowData)
-		dsPlants = system.dataset.toDataSet(headers, rows)
-	dsPlants = system.dataset.sort(dsPlants, "sourceID")
-	dsPlants = system.dataset.sort(dsPlants, "plantID")
-	# Add an index for the drop down
-	ddPlants = system.dataset.addColumn(dsPlants, 0, list(range(dsPlants.getRowCount())), 'index', int)
-	if event is not None:
-		rc = system.gui.getParentWindow(event).getRootContainer()
-		header = rc.getComponent("Header")
-		header.getComponent("PlantDropdown").data = getPlantDropDown(event)
+def set_plants(rc):
+	systemName = system.tag.readBlocking("[System]Gateway/SystemName")[ 0 ].value
+	if systemName == "Ignition-BLM-SQL02":
+		additionalClause = ""
+	else:
+		additionalClause = "AND gateway = '{}'".format(systemName)
+	qry = """
+	SELECT DISTINCT
+		[plantID]
+		,[plantName]
+		,[plantCode3]
+		,[sourceID]
+		,[providerLocal]
+		,[providerRemote]
+		,[gateway]
+		,[defaultHistorian]
+		,[gatewayHostname]
+	FROM [Glass].[soc].[plantDef]
+	WHERE sourceID IN (1,3) AND lineLinkID > 0
+	{additionalClause} 
+	ORDER BY sourceID, plantID
+	""".format(additionalClause=additionalClause)
+	pyds = system.db.runQuery(qry, "glass")
+	ddPlants = system.dataset.toDataSet(pyds)
+	dropDown = rc.getComponent("Header").getComponent('PlantDropdown')
+	dropDown.data = ddPlants
+	dropDown.selectedIndex = 0
+	r = set_location(ddPlants,0)
 	return ddPlants
 
 
@@ -89,16 +77,21 @@ def plantDropDown_propertyChange(event):
 	if event.propertyName in 'selectedStringValue':
 		dd = event.source
 		if dd.selectedIndex > -1:
-			tagpaths = {
-				"[client]oee/plant/sourceID": dd.data.getValueAt(dd.selectedIndex, "sourceID"),
-				"[client]oee/plant/plantID": dd.data.getValueAt(dd.selectedIndex, "plantID"),
-				"[client]oee/plant/plantName": dd.data.getValueAt(dd.selectedIndex, "plantName"),
-				"[client]oee/line/lineLinkID": 0,
-				"[client]oee/line/lineNumber": 0
-				}
-			r = system.tag.writeBlocking( tagpaths.keys(), tagpaths.values() )
+			r = set_location(dd.data, dd.selectedIndex)
 		refresh_data(event)
 	return
+
+
+def set_location(dropdown, selectedIndex):
+	tagpaths = {
+		"[client]oee/plant/sourceID": dropdown.getValueAt(selectedIndex,"sourceID"),
+		"[client]oee/plant/plantID": dropdown.getValueAt(selectedIndex,"plantID"),
+		"[client]oee/plant/plantName": dropdown.getValueAt(selectedIndex,"plantName"),
+		"[client]oee/line/lineLinkID": 0,
+		"[client]oee/line/lineNumber": 0
+	}
+	r = system.tag.writeBlocking(tagpaths.keys(),tagpaths.values())
+	return r
 
 
 def read_location():
@@ -119,28 +112,41 @@ def read_location():
 	return location
 
 
-def refresh_data_OLD(event):
+def refresh_data_no_timing(event):
 	"""
-	Version 1
+	Version 2
 	Args:
 		event:
-
 	Returns:
-
 	"""
 	loc = read_location()
-	glass_db = oee.util.get_glass_db()
-	orderStats = oee.db.getOrderStats(glass_db, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
-	erpData = oee.db.getErpData("CharterSQL_RC", loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
-	downtimeEvents = oee.db.getDowntimeEvents(glass_db, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
-	oee_plant = get_plant_oee(orderStats, erpData, downtimeEvents)
-	print 'refresh_data', loc
-	template_data = get_template_data(oee_plant, loc["sourceID"], loc["plantID"])
-	#downtime_states = get_downtime_states(downtimeEvents)
+	glassDB = oee.util.get_glass_db()
+	erpDB = "CharterSQL_RC"
+	ds_orders = oee.roll_detail.getOrdersByDateRange(glassDB,loc["sourceID"], loc["plantID"],loc["startDate"], loc["endDate"])
+	orderNumbers = tuple(filter(None,set(row[ "orderNumber" ] for row in ds_orders)))
+	orderTracking = oee.roll_detail.getOrderTracking(glassDB, loc["sourceID"], orderNumbers)
+	orderStats = oee.roll_detail.getOrderStats(glassDB, loc["sourceID"], orderNumbers)
+	productionData = oee.roll_detail.getErpProductionData(erpDB, orderNumbers)
+	productionItems = oee.roll_detail.getErpProductionItems(erpDB, orderNumbers)
+	# downtimeEvents = oee.db.getDowntimeEvents(glassDB, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
+	downtimeEvents = oee.roll_detail.getDowntimeEvents(glassDB,loc["sourceID"], orderNumbers)
+	machine_orders = oee.roll_detail.get_machine_orders(glassDB, orderNumbers)
+	machine_roll_detail = oee.roll_detail.get_machine_roll_detail(glassDB, orderNumbers)
+	bad_pit_records = oee.roll_detail.validate_pit_records(productionItems, machine_roll_detail)
 	tagpaths = {
-		"[client]oee/plant/orderStats": orderStats,
-		"[client]oee/plant/erpData": erpData,
-		"[client]oee/plant/downtimeEvents": downtimeEvents,
+		"[client]oee/plant/orderStats": system.dataset.toDataSet(orderStats),
+		"[client]oee/plant/orderTracking": system.dataset.toDataSet(orderTracking),
+		"[client]oee/plant/erpData": system.dataset.toDataSet(productionData),
+		"[client]oee/plant/erpRolls": system.dataset.toDataSet(productionItems),
+		"[client]oee/plant/downtimeEvents": system.dataset.toDataSet(downtimeEvents),
+		"[client]oee/plant/machine_orders": system.dataset.toDataSet(machine_orders),
+		"[client]oee/plant/machine_roll_detail": system.dataset.toDataSet(machine_roll_detail),
+		"[client]oee/plant/bad_pit_records": bad_pit_records
+	}
+	r = system.tag.writeBlocking(tagpaths.keys(), tagpaths.values())
+	oee_plant = get_plant_oee_v2(orderStats, productionItems, downtimeEvents)
+	template_data = get_template_data(oee_plant, loc["sourceID"], loc["plantID"], loc["startDate"], loc["endDate"])
+	tagpaths = {
 		"[client]oee/plant/oeeData": oee_plant,
 		"[client]oee/plant/template_data": template_data
 	}
@@ -202,7 +208,7 @@ def refresh_data(event):
 	print("orderStats",len(orderStats), " records")
 	print("productionData",len(productionData), " records")
 	print("productionItems",len(productionItems), " records")
-	print("downtimeEvents",downtimeEvents, " records")
+	print("downtimeEvents",len(downtimeEvents), " records")
 	print("machine_orders",len(machine_orders), " records")
 	print("machine_roll_detail",len(machine_roll_detail), " records")
 	tagpaths = {
@@ -391,8 +397,14 @@ def get_plant_oee_v2(orderStats, erpRolls, downtimeEvents):
 			# print prodTime, pitStart, pitEnd, type(prodTime), type(pitStart), type(pitEnd)
 
 			if prodTime is not None:
-				if system.date.isBetween(prodTime, dateStart, dateEnd):
-					return True
+				try:
+					if system.date.isBetween(prodTime, dateStart, dateEnd):
+						return True
+				except:
+					print "Error at line 413", rowIndex, dateStart, dateEnd, prodTime
+
+
+					return False
 			if pitStart is not None:
 				if system.date.isBetween(pitStart, dateStart, dateEnd):
 					return True

@@ -127,13 +127,36 @@ def getErpProductionData(database, orderNumbers):
 
 def getErpProductionItems(database, orderNumbers):
 	qry = """
-	SELECT TOP(50000) 
-				1 AS sourceID
-				,SalesOrders.plantRoutingID AS plantID
-				,ProductionLineInfo.lineInfoID AS lineLinkID
-				,ProductionLineInfo.lineNumber
-				,CAST(DATEDIFF(second, productionItems.pitStartTime, productionItems.pitEndTime) / 3600.0 AS DECIMAL(6,2)) AS duration_hours
-				,productionItems.* 
+	SELECT TOP(50000)
+		[ID] 
+		,1 AS sourceID
+		,SalesOrders.plantRoutingID AS plantID
+		,ProductionLineInfo.lineInfoID AS lineLinkID
+		,ProductionLineInfo.lineNumber
+		,CAST(DATEDIFF(second, productionItems.pitStartTime, productionItems.pitEndTime) / 3600.0 AS DECIMAL(6,2)) AS duration_hours
+		,productionItems.[orderNumber]
+		,productionItems.[prodOrderNumber]
+		,productionItems.[itemNumber]
+		,productionItems.[position]
+		,productionItems.[prodPalletNumber]
+		,productionItems.[prodPalletID]
+		,productionItems.[weight]
+		,productionItems.[length]
+		,productionItems.[itemLabelPrinted]
+		,productionItems.[palletLabelPrinted]
+		,productionItems.[itemScrapped]
+		,productionItems.[FGWHID]
+		,productionItems.[prodLineID]
+		,CAST(productionItems.[prodDateStamp] as DATETIME) AS prodDateStamp
+		,productionItems.[pitID]
+		,productionItems.[pitStartTime]
+		,productionItems.[pitEndTime]
+		,productionItems.[runtimeInSeconds]
+		,productionItems.[LabelPrintDateStamp]
+		,productionItems.[FinishedWeight]
+		,productionItems.[prevItemNumber]
+		,productionItems.[productionWeight]
+		,productionItems.[currentWeight]
 	FROM dbo.productionItems
 	JOIN dbo.SalesOrders WITH (NOLOCK)
 		ON SalesOrders.ordernumber = productionItems.prodOrderNumber
@@ -326,3 +349,79 @@ def get_roll_detail_all(event):
 	rc.getComponent("cnt_indexesERP").getComponent("tbl_data").data = indexesERP
 	rc.getComponent("cnt_indexesMachine").getComponent("tbl_data").data = indexesMachine
 	return
+
+
+def find_pit_source(pitID, pitStart, pitEnd, runtime):
+	def get_defaultHistorians():
+		qry = """
+		SELECT DISTINCT defaultHistorian
+		FROM [Glass].[soc].[plantDef]
+		WHERE soc.plantDef.sourceID in (1) AND lineLinkID > 0
+		"""
+		return system.db.runQuery(qry,"glass")
+
+	historians = [ row["defaultHistorian"] for row in get_defaultHistorians() ]
+	bad_pitIDs = [942628,936585]
+	pit_query = "SELECT * FROM dbo.indexTimes WHERE indextimes_ndx = {pitID}".format(pitID=pitID)
+	for historian in historians:
+		py_Indexes = system.db.runQuery(pit_query, historian)
+		if py_Indexes.rowCount > 0:
+			for roll in py_Indexes:
+				if roll["startTime"] == pitStart or roll["endTime"] == pitEnd or roll["runtimeInSeconds"] == runtime:
+					return historian, roll["Order_Number"]
+	return None, "Not Found"
+
+
+def validate_pit_records(erpRolls, machine_roll_detail):
+	def create_dataset(row_data):
+		from com.inductiveautomation.ignition.common.util import DatasetBuilder
+		from java.lang import Integer, String, Boolean, Float
+		from java.util import Date
+		row_def = []
+		row_def.append( [ "ID",Integer ] )
+		row_def.append( [ "sourceID", Integer ] )
+		row_def.append( [ "plantID", Integer ] )
+		row_def.append( [ "lineLinkID", Integer ] )
+		row_def.append( [ "lineNumber", Integer ] )
+		row_def.append( [ "orderNumber", Integer ] )
+		row_def.append( [ "pitOrder", String ] )
+		row_def.append( [ "i_erp", Integer ] )
+		row_def.append( [ "erp_pit", Integer ] )
+		row_def.append( [ "pitStart", Date ] )
+		row_def.append( [ "pitEnd", Date ] )
+		row_def.append(["runtime",Integer])
+		row_def.append( [ "pit_source", String ] )
+		infoBuilder = DatasetBuilder.newBuilder()
+		infoBuilder.colNames(col[0] for col in row_def)
+		infoBuilder.colTypes(col[1] for col in row_def)
+		for row in row_data:
+			infoBuilder.addRow(row)
+		ds = infoBuilder.build()
+		return ds
+
+	def find_in_machine(pitID):
+		for i_machine in range(machine_roll_detail.rowCount):
+			if pitID == machine_roll_detail.getValueAt(i_machine, "pitID"):
+				return True, machine_roll_detail.getValueAt(i_machine, "orderNumber")
+		return False, 0
+
+	bad_pit_records = []
+	# for i_erp in range(50):
+	for i_erp in range(erpRolls.rowCount):
+		pitStart = erpRolls.getValueAt(i_erp, "pitStartTime")
+		pitEnd = erpRolls.getValueAt(i_erp, "pitEndTime")
+		if pitStart is not None and pitEnd is not None:
+			erp_id = erpRolls.getValueAt(i_erp, "ID")
+			sourceID = erpRolls.getValueAt(i_erp, "sourceID")
+			plantID = erpRolls.getValueAt(i_erp, "plantID")
+			lineLinkID = erpRolls.getValueAt(i_erp, "lineLinkID")
+			lineNumber = erpRolls.getValueAt(i_erp, "lineNumber")
+			orderNumber = erpRolls.getValueAt(i_erp, "orderNumber")
+			erp_pit = erpRolls.getValueAt(i_erp, "pitID")
+			runtime = erpRolls.getValueAt(i_erp, "runtimeInSeconds")
+			machine_pit_found, machine_pit_orderNumber = find_in_machine(erp_pit)
+			if not machine_pit_found:
+				pit_source, machine_pit_orderNumber = find_pit_source(erp_pit, pitStart, pitEnd, runtime)
+				bad_pit_records.append([erp_id,sourceID,plantID,lineLinkID,lineNumber,orderNumber,machine_pit_orderNumber,i_erp, erp_pit, pitStart, pitEnd, runtime, pit_source])
+	dsBadPit = create_dataset(bad_pit_records)
+	return dsBadPit

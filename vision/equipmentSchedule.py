@@ -192,12 +192,9 @@ def filterByOrder(orderNumber):
 	scheduledEvents = system.tag.readBlocking(["[client]oee/line/schedule_scheduledEvents"])[0].value
 	downtimeEvents = system.tag.readBlocking(["[client]oee/line/schedule_downtimeEvents"])[0].value
 	breakEvents = system.tag.readBlocking(["[client]oee/line/schedule_breakEvents"])[0].value
-
-	filtered_scheduledEvents = oee.util.filterDataset(scheduledEvents,["orderNumber"],[orderNumber])
+	filtered_scheduledEvents = oee.util.filterDataset(scheduledEvents,["orderNumber"],[str(orderNumber)])
 	filtered_downtimeEvents = oee.util.filterDataset(downtimeEvents,["orderNumber"],[str(orderNumber)])
-
 	minDate,maxDate = get_dates(filtered_scheduledEvents,filtered_downtimeEvents)
-
 	tagpaths = {
 		"[client]oee/orderNumber/schedule_items": items
 		,"[client]oee/orderNumber/schedule_scheduledEvents": filtered_scheduledEvents

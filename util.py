@@ -128,3 +128,9 @@ def flipDataset(ds):
 		builder.addRow(newRow)
 	dsFlipped = builder.build()
 	return dsFlipped
+
+
+def round_half_up(n, decimals=5):
+	import math
+	multiplier = 10**decimals
+	return math.floor(n * multiplier + 0.5) / multiplier

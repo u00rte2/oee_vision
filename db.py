@@ -266,54 +266,6 @@ def getDowntimeEvents(database, sourceID, plantID, startDate, endDate):
 
 
 def getTargetHistory(database, socID):
-	qry = """
-	DROP TABLE IF EXISTS #socTargets;
-		SELECT TOP (1000) 
-			h.[pk_socID] AS socID
-		  ,h.[creationDate]
-		  ,0 AS revisionLevel
-		  ,NULL AS revisionDate
-		  ,h.reviewer AS userName
-		  ,NULL AS paramOldValue
-		  ,NULL AS paramNewValue
-		  ,d.paramValue AS currentTarget
-		  INTO #socTargets
-	  FROM [Glass].[soc].[Header] h
-	  LEFT JOIN soc.[Data] d ON h.[pk_socID] = d.fk_socID
-	  WHERE h.[pk_socID]  = {socID} AND d.fk_paramDefID = 40 
-	UNION
-		SELECT TOP (1000) 
-			h.[pk_socID] AS socID
-		  ,NULL AS creationDate
-			  ,rh.[revisionLevel]
-		  ,rh.[revisionDate]
-		  ,rh.revisedBy AS userName
-		  ,rd.[paramOldValue]  
-		  ,rd.[paramNewValue]
-		  ,d.paramValue AS currentTarget
-	  FROM [Glass].[soc].[Header] h
-	  LEFT JOIN soc.[Data] d ON h.[pk_socID] = d.fk_socID
-	  LEFT JOIN [soc].[revisionHeader] rh ON rh.fk_socID = h.pk_socID
-	  LEFT JOIN [Glass].[soc].[revisionData] rd ON rh.[pk_revisionID] = rd.[fk_revisionID]
-	  WHERE h.[pk_socID]  = {socID} AND d.fk_paramDefID = 40 AND rd.fk_paramDefID = 40
-	  ORDER BY revisionLevel
-
-	 SELECT 
-		socID
-		,revisionLevel AS revLevel
-		,CASE
-			WHEN (SELECT COUNT(*) FROM #socTargets) = 1 THEN currentTarget
-			WHEN revisionLevel + 1 = (SELECT COUNT(*) FROM #socTargets) THEN paramNewValue
-			ELSE 		LEAD(paramOldValue,1,paramNewValue) OVER ( --PARTITION BY rh.[fk_socID], rh.[revisionLevel]
-				ORDER BY revisionLevel)
-		END AS socTarget
-		,CASE
-			WHEN revisionDate IS NULL THEN creationDate
-			ELSE revisionDate
-		END AS effectiveDate
-		,userName
-	FROM #socTargets
-	DROP TABLE IF EXISTS #socTargets
-	""".format(socID = socID)
+	qry = "EXEC soc.getTargetHistory  {socID}".format(socID = socID)
 	socTargets = system.db.runQuery(qry, database)
 	return system.dataset.toDataSet(socTargets)
